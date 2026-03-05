@@ -2,7 +2,7 @@
   
   <div align="center">
 
-  **Kōdo**
+  # Kōdo
 
   **A Lightning-Fast, Feature-Rich Local Manga & Manhwa Reader with Built-in AI Upscaling.**
 
