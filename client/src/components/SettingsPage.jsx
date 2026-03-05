@@ -1,11 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
 import CustomDropdown from './CustomDropdown';
-import BackupPasswordModal from './BackupPasswordModal';
+import ExportBackupModal from './ExportBackupModal';
 import GDriveRestoreModal from './GDriveRestoreModal';
 import paypalLogo from '../assets/PayPal.svg';
 import kofiLogo from '../assets/ko-fi-logo.svg';
 import kodo500Logo from '../assets/kodo_500.svg';
-import { apiUrl } from '../runtime';
+import { apiUrl, isTauriRuntime } from '../runtime';
+
+const handleExternalLink = async (e, url) => {
+    e.preventDefault();
+    try {
+        if (isTauriRuntime()) {
+            const { open } = await import('@tauri-apps/plugin-shell');
+            await open(url);
+        } else {
+            window.open(url, '_blank', 'noopener,noreferrer');
+        }
+    } catch {
+        window.open(url, '_blank', 'noopener,noreferrer');
+    }
+};
 
 const formatBytes = (bytes) => {
     if (bytes === 0) return '0 B';
@@ -1422,7 +1436,7 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                                     ))}
                                 </div>
                                 <div className="settings-desc" style={{ marginTop: 2 }}>
-                                    Encrypted with <b>AES-256-GCM</b>. Without the correct password, the file cannot be read.
+                                    Optionally protected with <b>AES-256-GCM</b> encryption. You can choose to export with or without a password.
                                 </div>
                             </div>
 
@@ -1516,7 +1530,7 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                                 <div style={{ display: 'flex', gap: 8 }}>
                                                     <span style={{ minWidth: 20, height: 20, borderRadius: '50%', background: 'rgba(66,133,244,0.15)', color: '#4285f4', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>1</span>
-                                                    <span>Go to <b><a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" style={{ color: '#4285f4', textDecoration: 'none' }}>console.cloud.google.com</a></b></span>
+                                                    <span>Go to <b><a href="https://console.cloud.google.com" onClick={(e) => handleExternalLink(e, 'https://console.cloud.google.com')} style={{ color: '#4285f4', textDecoration: 'none' }}>console.cloud.google.com</a></b></span>
                                                 </div>
                                                 <div style={{ display: 'flex', gap: 8 }}>
                                                     <span style={{ minWidth: 20, height: 20, borderRadius: '50%', background: 'rgba(66,133,244,0.15)', color: '#4285f4', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>2</span>
@@ -1629,7 +1643,7 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                             </p>
 
                             <div style={{ display: 'flex', gap: 12, position: 'relative', zIndex: 1 }}>
-                                <a href="https://github.com/ToastyyyBread" target="_blank" rel="noopener noreferrer" style={{
+                                <a href="https://github.com/ToastyyyBread" onClick={(e) => handleExternalLink(e, 'https://github.com/ToastyyyBread')} style={{
                                     display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 20,
                                     background: 'var(--surface2)', color: 'var(--text)', fontSize: 12, fontWeight: 600,
                                     textDecoration: 'none', border: '1px solid var(--border)', transition: 'all 0.2s'
@@ -1744,7 +1758,7 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                             {/* PayPal */}
-                            <a href="https://paypal.me/mhmtsyd" target="_blank" rel="noopener noreferrer" style={{
+                            <a href="https://paypal.me/makuwaku" onClick={(e) => handleExternalLink(e, 'https://paypal.me/makuwaku')} style={{
                                 display: 'flex', alignItems: 'center', gap: 16, padding: '16px 20px', borderRadius: 16,
                                 background: 'var(--surface)', border: '1.5px solid var(--border)', textDecoration: 'none', transition: 'all 0.2s',
                                 cursor: 'pointer', position: 'relative', overflow: 'hidden'
@@ -1757,7 +1771,7 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                                 </div>
                                 <div style={{ flex: 1 }}>
                                     <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>PayPal</div>
-                                    <div style={{ fontSize: 13, color: 'var(--muted)' }}>Ideal for international users</div>
+                                    <div style={{ fontSize: 13, color: 'var(--muted)' }}>Thank you for your support!</div>
                                 </div>
                                 <div style={{ color: 'var(--muted)', opacity: 0.5 }}>
                                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
@@ -1765,7 +1779,7 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                             </a>
 
                             {/* Ko-fi */}
-                            <a href="https://ko-fi.com/toastyyybread" target="_blank" rel="noopener noreferrer" style={{
+                            <a href="https://ko-fi.com/toastyyybread" onClick={(e) => handleExternalLink(e, 'https://ko-fi.com/toastyyybread')} style={{
                                 display: 'flex', alignItems: 'center', gap: 16, padding: '16px 20px', borderRadius: 16,
                                 background: 'var(--surface)', border: '1.5px solid var(--border)', textDecoration: 'none', transition: 'all 0.2s',
                                 cursor: 'pointer', position: 'relative', overflow: 'hidden'
@@ -1786,7 +1800,7 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                             </a>
 
                             {/* Trakteer */}
-                            <a href="https://trakteer.id/mhmtsyd" target="_blank" rel="noopener noreferrer" style={{
+                            <a href="https://trakteer.id/Fabiannn/tip" onClick={(e) => handleExternalLink(e, 'https://trakteer.id/Fabiannn/tip')} style={{
                                 display: 'flex', alignItems: 'center', gap: 16, padding: '16px 20px', borderRadius: 16,
                                 background: 'var(--surface)', border: '1.5px solid var(--border)', textDecoration: 'none', transition: 'all 0.2s',
                                 cursor: 'pointer', position: 'relative', overflow: 'hidden'
@@ -1799,7 +1813,7 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                                 </div>
                                 <div style={{ flex: 1 }}>
                                     <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>Trakteer</div>
-                                    <div style={{ fontSize: 13, color: 'var(--muted)' }}>For Indonesian users (GOPAY, OVO, etc.)</div>
+                                    <div style={{ fontSize: 13, color: 'var(--muted)' }}>For Indonesian users (Terima kasih!)</div>
                                 </div>
                                 <div style={{ color: 'var(--muted)', opacity: 0.5 }}>
                                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
@@ -1815,8 +1829,9 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
             {modal}
 
             {backupModalOpen && (
-                <BackupPasswordModal
-                    isRestore={backupIsRestore}
+                <ExportBackupModal
+                    mode={backupIsRestore ? 'restore' : 'export'}
+                    includeFiles={includeFiles}
                     onClose={() => setBackupModalOpen(false)}
                     onSubmit={handleBackupSubmit}
                 />

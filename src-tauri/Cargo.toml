@@ -22,5 +22,6 @@ log = "0.4"
 tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
 reqwest = { version = "0.12", features = ["blocking"] }
 portpicker = "0.1"

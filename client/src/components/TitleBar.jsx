@@ -2,6 +2,20 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { apiUrl, isTauriRuntime } from '../runtime';
 
+const handleExternalLink = async (e, url) => {
+    e.preventDefault();
+    try {
+        if (isTauriRuntime()) {
+            const { open } = await import('@tauri-apps/plugin-shell');
+            await open(url);
+        } else {
+            window.open(url, '_blank', 'noopener,noreferrer');
+        }
+    } catch {
+        window.open(url, '_blank', 'noopener,noreferrer');
+    }
+};
+
 const normalizeVersion = (value) => String(value || '').trim().replace(/^v/i, '');
 const parseVersion = (value) => normalizeVersion(value)
     .split('.')
@@ -211,7 +225,7 @@ const TitleBar = () => {
 
                             {!updateState.checking && !updateState.configured && (
                                 <div className="titlebar-update-text">
-                                    Update checker belum aktif. Set <code>appUpdateRepo</code> atau <code>appUpdateApiUrl</code> di <code>config.json</code>.
+                                    Update checker not active. Set <code>appUpdateRepo</code> or <code>appUpdateApiUrl</code> in <code>config.json</code>.
                                 </div>
                             )}
 
@@ -222,16 +236,16 @@ const TitleBar = () => {
                             {!updateState.checking && updateState.configured && !updateState.error && updateState.hasUpdate && (
                                 <div className="titlebar-update-info">
                                     <div className="titlebar-update-badge">Update available</div>
-                                    <div className="titlebar-update-meta">Current: {updateState.currentVersion || '-'}</div>
-                                    <div className="titlebar-update-meta">Latest: {updateState.latestVersion || '-'}</div>
+                                    <div className="titlebar-update-meta"><span>Current</span><span>{updateState.currentVersion || '-'}</span></div>
+                                    <div className="titlebar-update-meta"><span>Latest</span><span>{updateState.latestVersion || '-'}</span></div>
                                     {updateState.releaseName ? (
-                                        <div className="titlebar-update-meta">Release: {updateState.releaseName}</div>
+                                        <div className="titlebar-update-meta"><span>Release</span><span>{updateState.releaseName}</span></div>
                                     ) : null}
                                     {formatReleaseDate(updateState.publishedAt) ? (
-                                        <div className="titlebar-update-meta">Published: {formatReleaseDate(updateState.publishedAt)}</div>
+                                        <div className="titlebar-update-meta"><span>Published</span><span>{formatReleaseDate(updateState.publishedAt)}</span></div>
                                     ) : null}
                                     {updateState.releaseUrl ? (
-                                        <a className="titlebar-update-link" href={updateState.releaseUrl} target="_blank" rel="noreferrer">
+                                        <a className="titlebar-update-link" href={updateState.releaseUrl} onClick={(e) => handleExternalLink(e, updateState.releaseUrl)}>
                                             Open Release
                                         </a>
                                     ) : null}
@@ -241,7 +255,7 @@ const TitleBar = () => {
                             {!updateState.checking && updateState.configured && !updateState.error && !updateState.hasUpdate && (
                                 <div className="titlebar-update-info">
                                     <div className="titlebar-update-badge ok">Up to date</div>
-                                    <div className="titlebar-update-meta">Version: {updateState.currentVersion || '-'}</div>
+                                    <div className="titlebar-update-meta"><span>Version</span><span>{updateState.currentVersion || '-'}</span></div>
                                 </div>
                             )}
                         </div>

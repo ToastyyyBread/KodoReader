@@ -38,10 +38,6 @@ const GDriveRestoreModal = ({ onClose, onRestore }) => {
             setError('Please select a backup to restore');
             return;
         }
-        if (!password) {
-            setError('Encryption password is required');
-            return;
-        }
         onRestore(selectedFileId, password);
     };
 
@@ -84,7 +80,7 @@ const GDriveRestoreModal = ({ onClose, onRestore }) => {
                             </div>
 
                             <div className="form-group">
-                                <label className="form-label">Encryption Password</label>
+                                <label className="form-label">Decryption Password (Optional)</label>
                                 <input
                                     type="password"
                                     className="form-input"
@@ -93,11 +89,11 @@ const GDriveRestoreModal = ({ onClose, onRestore }) => {
                                         setPassword(e.target.value);
                                         setError('');
                                     }}
-                                    placeholder="Enter decryption password..."
+                                    placeholder="Leave empty for no password"
                                     disabled={backups.length === 0}
                                 />
                                 <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>
-                                    Required to decrypt the backup file.
+                                    Leave blank if the backup was created without a password.
                                 </div>
                             </div>
 
@@ -107,7 +103,7 @@ const GDriveRestoreModal = ({ onClose, onRestore }) => {
 
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-                        <button type="submit" className="btn btn-primary" disabled={loading || backups.length === 0 || !selectedFileId || !password}>
+                        <button type="submit" className="btn btn-primary" disabled={loading || backups.length === 0 || !selectedFileId}>
                             Start Restore
                         </button>
                     </div>

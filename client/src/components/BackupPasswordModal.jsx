@@ -6,14 +6,6 @@ const BackupPasswordModal = ({ isRestore, onClose, onSubmit }) => {
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        if (!password) {
-            setError('Password is required');
-            return;
-        }
-        if (password.length < 4) {
-            setError('Password must be at least 4 characters');
-            return;
-        }
         onSubmit(password);
     };
 
@@ -26,14 +18,14 @@ const BackupPasswordModal = ({ isRestore, onClose, onSubmit }) => {
                 </div>
                 <form onSubmit={handleSubmit} style={{ padding: '0 24px 24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
 
-                    <div style={{ fontSize: '13px', color: 'var(--muted)', lineHeight: '1.5' }}>
+                    <div style={{ fontSize: '13.5px', color: 'var(--muted)', lineHeight: '1.5', padding: '16px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)', marginBottom: '4px' }}>
                         {isRestore
-                            ? 'Enter the password used when creating this backup. The backup cannot be decrypted without the correct password.'
-                            : 'Enter a strong password to encrypt your backup. You will need this password to restore your data later. Do not lose it!'}
+                            ? 'Enter the password used when creating this backup. If you created it without a password, leave this blank.'
+                            : 'Set an optional encryption password to secure your backup. If you choose to set one, do not lose it!'}
                     </div>
 
                     <div className="form-group">
-                        <label className="form-label">Encryption Password</label>
+                        <label className="form-label">{isRestore ? 'Decryption Password' : 'Encryption Password'} (Optional)</label>
                         <input
                             type="password"
                             className="form-input"
@@ -42,7 +34,7 @@ const BackupPasswordModal = ({ isRestore, onClose, onSubmit }) => {
                                 setPassword(e.target.value);
                                 setError('');
                             }}
-                            placeholder="Enter password..."
+                            placeholder="Leave empty for no password"
                             autoFocus
                         />
                         {error && <div style={{ color: '#e11d48', fontSize: '12px', marginTop: '4px' }}>{error}</div>}
@@ -50,7 +42,7 @@ const BackupPasswordModal = ({ isRestore, onClose, onSubmit }) => {
 
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-                        <button type="submit" className="btn btn-primary" disabled={!password}>
+                        <button type="submit" className="btn btn-primary">
                             {isRestore ? 'Decrypt & Restore' : 'Encrypt & Save'}
                         </button>
                     </div>

@@ -112,8 +112,7 @@ const normalizeGithubRepo = (rawRepo) => {
 const resolveUpdateApiUrl = () => {
     const explicitApiUrl = normalizeConfigValue(getConfigValue('appUpdateApiUrl'));
     if (explicitApiUrl) return explicitApiUrl;
-    const repo = normalizeGithubRepo(getConfigValue('appUpdateRepo'));
-    if (!repo) return '';
+    const repo = normalizeGithubRepo(getConfigValue('appUpdateRepo')) || 'ToastyyyBread/KodoReader';
     return `https://api.github.com/repos/${repo}/releases/latest`;
 };
 
@@ -636,41 +635,7 @@ app.get('/api/health', (_req, res) => {
     res.json({ ok: true });
 });
 
-app.get('/api/app/update/check', async (_req, res) => {
-    const apiUrl = resolveUpdateApiUrl();
-    const currentVersion = getAppVersion();
-    if (!apiUrl) {
-        return res.json({
-            configured: false,
-            currentVersion,
-            error: 'Update checker is not configured. Set "appUpdateRepo" or "appUpdateApiUrl" in config.json.',
-        });
-    }
 
-    try {
-        const payload = await fetchJsonWithTimeout(apiUrl);
-        const tagName = normalizeConfigValue(payload?.tag_name || payload?.name);
-        const repo = normalizeGithubRepo(getConfigValue('appUpdateRepo'));
-        const fallbackReleaseUrl = repo ? `https://github.com/${repo}/releases` : '';
-
-        res.json({
-            configured: true,
-            currentVersion,
-            latestVersion: tagName,
-            releaseName: normalizeConfigValue(payload?.name),
-            releaseUrl: normalizeConfigValue(payload?.html_url) || fallbackReleaseUrl,
-            publishedAt: normalizeConfigValue(payload?.published_at),
-            prerelease: Boolean(payload?.prerelease),
-            draft: Boolean(payload?.draft),
-        });
-    } catch (err) {
-        res.status(502).json({
-            configured: true,
-            currentVersion,
-            error: `Failed to check update: ${err?.message || 'unknown error'}`,
-        });
-    }
-});
 
 app.post('/api/meta/clear', (req, res) => {
     try {
@@ -850,6 +815,21 @@ app.delete('/api/bookmarks/:id', (req, res) => {
         list = list.filter(b => b.id !== id);
         saveBookmarks(list);
         res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.patch('/api/bookmarks/:id/favorite', (req, res) => {
+    try {
+        const { id } = req.params;
+        const { favorite } = req.body;
+        const list = loadBookmarks();
+        const bm = list.find(b => b.id === id);
+        if (!bm) return res.status(404).json({ error: 'Bookmark not found' });
+        bm.favorite = !!favorite;
+        saveBookmarks(list);
+        res.json({ success: true, favorite: bm.favorite });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -1935,8 +1915,8 @@ app.get('/api/upscale/preview-images/:jobId', (req, res) => {
 // ── BACKUP ENDPOINTS ───────────────────────────────────────
 app.post('/api/backup/export', (req, res) => {
     try {
-        const { password } = req.body;
-        if (!password) return res.status(400).json({ error: 'Password required' });
+        let { password } = req.body;
+        password = password || '';
 
         const meta = loadMeta();
         const categories = loadCategories();
@@ -1956,8 +1936,8 @@ const backupUpload = multer({ storage: multer.memoryStorage() }).single('backupF
 
 app.post('/api/backup/import', backupUpload, (req, res) => {
     try {
-        const { password } = req.body;
-        if (!password) return res.status(400).json({ error: 'Password required' });
+        let { password } = req.body;
+        password = password || '';
         if (!req.file) return res.status(400).json({ error: 'Backup file required' });
 
         const decryptedMeta = decryptData(req.file.buffer, password);
@@ -2125,8 +2105,8 @@ app.get('/api/backup/size', async (req, res) => {
 });
 
 app.post('/api/backup/job/start', async (req, res) => {
-    const { password } = req.body;
-    if (!password) return res.status(400).json({ error: 'Password required' });
+    let { password } = req.body;
+    password = password || '';
     const jobId = `bkp_${Date.now()}`;
     // We stream directly to the final .kdba file; no tmpZip needed!
     const tmpOut = path.join(APP_ROOT, 'data', `_backup_${jobId}.kdba`);
@@ -2231,8 +2211,8 @@ app.get('/api/backup/job/download/:id', (req, res) => {
 
 app.post('/api/backup/full-export', async (req, res) => {
     try {
-        const { password } = req.body;
-        if (!password) return res.status(400).json({ error: 'Password required' });
+        let { password } = req.body;
+        password = password || '';
         const tmpOut = path.join(APP_ROOT, 'data', `_backup_tmp_${Date.now()}.kdba`);
         const { entries: backupEntries } = getLibraryBackupSizeBytes();
         await new Promise((resolve, reject) => {
@@ -2266,8 +2246,8 @@ const fullBackupUpload = multer({ storage: multer.diskStorage({ destination: pat
 app.post('/api/backup/full-import', fullBackupUpload, async (req, res) => {
     let tmpZip = null;
     try {
-        const { password } = req.body;
-        if (!password) return res.status(400).json({ error: 'Password required' });
+        let { password } = req.body;
+        password = password || '';
         if (!req.file) return res.status(400).json({ error: 'Backup file required' });
         const filePath = req.file.path;
 
@@ -2378,8 +2358,8 @@ app.post('/api/gdrive/disconnect', (req, res) => {
 
 app.post('/api/backup/gdrive/export', async (req, res) => {
     try {
-        const { password } = req.body;
-        if (!password) return res.status(400).json({ error: 'Password required' });
+        let { password } = req.body;
+        password = password || '';
 
         const meta = loadMeta();
         const encrypted = encryptData(meta, password);
@@ -2403,8 +2383,9 @@ app.get('/api/backup/gdrive/list', async (req, res) => {
 
 app.post('/api/backup/gdrive/import', async (req, res) => {
     try {
-        const { fileId, password } = req.body;
-        if (!fileId || !password) return res.status(400).json({ error: 'fileId and password required' });
+        let { fileId, password } = req.body;
+        password = password || '';
+        if (!fileId) return res.status(400).json({ error: 'fileId required' });
 
         const encryptedBuffer = await gdrive.downloadBackup(fileId);
 
@@ -2692,6 +2673,42 @@ app.post('/api/rename-series', (req, res) => {
         res.json({ ok: true, renamed });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// ── App Update Check ──────────────────
+app.get('/api/app/update/check', async (req, res) => {
+    try {
+        const fetch = (await import('node-fetch')).default || globalThis.fetch;
+        if (!fetch) throw new Error('Fetch API not found');
+
+        // Fetch latest release from GitHub API
+        const ghRes = await fetch('https://api.github.com/repos/ToastyyyBread/KodoReader/releases/latest', {
+            headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'KodoReader-App' }
+        });
+
+        if (!ghRes.ok) {
+            throw new Error(`GitHub API returned ${ghRes.status}`);
+        }
+
+        const data = await ghRes.json();
+
+        // Return structured data for the frontend TitleBar component
+        res.json({
+            configured: true,
+            currentVersion: process.env.npm_package_version || '1.0.0', // Fallback current version
+            latestVersion: data.tag_name || '',
+            releaseName: data.name || '',
+            releaseUrl: data.html_url || '',
+            publishedAt: data.published_at || '',
+            error: ''
+        });
+
+    } catch (err) {
+        res.json({
+            configured: true,
+            error: `Failed to check for updates: ${err.message}`
+        });
     }
 });
 
