@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hiperdex Scraper</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="container">
+
+        <!-- Header -->
+        <header>
+            <h1>Hiperdex Scraper</h1>
+            <p>Download and package manga series into CBZ format.</p>
+        </header>
+
+        <form id="scraper-form">
+
+            <!-- Row 1: Source + Download & Request -->
+            <div class="grid-2">
+
+                <!-- Source Section -->
+                <div class="card">
+                    <div class="card-title">Source</div>
+
+                    <div class="field">
+                        <label for="url">URL</label>
+                        <input type="url" id="url" required placeholder="https://hiperdex.com/manga/title/">
+                    </div>
+
+                    <div class="field">
+                        <label for="series_name">Series Name</label>
+                        <input type="text" id="series_name" placeholder="Optional — auto-detected from URL">
+                    </div>
+
+                    <div class="field-row">
+                        <div class="field">
+                            <label for="start_chapter">Start Chapter</label>
+                            <input type="number" id="start_chapter" value="1" min="1">
+                        </div>
+                        <div class="field">
+                            <label for="end_chapter">End Chapter</label>
+                            <input type="number" id="end_chapter" value="0" min="0" title="0 = until the last chapter">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Download Section -->
+                <div class="card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div class="card-title">Download</div>
+                        <label class="toggle" title="Enable Concurrent">
+                            <input type="checkbox" id="concurrent_enabled" checked>
+                            <div class="toggle-track"></div>
+                        </label>
+                    </div>
+
+                    <div class="field">
+                        <label for="output_dir">Output Folder</label>
+                        <div class="input-with-btn">
+                            <input type="text" id="output_dir" value="downloads" placeholder="downloads">
+                            <button type="button" class="btn-browse" onclick="browseFolder()">Browse</button>
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label for="download_workers">
+                            Workers
+                            <span class="help-icon">?
+                                <span class="tooltip">
+                                    Number of images downloaded simultaneously.<br><br>
+                                    <strong>1–3</strong>: Safe from IP blocking<br>
+                                    <strong>5</strong>: Recommended (Default)<br>
+                                    <strong>10+</strong>: Very fast, but high risk of being banned
+                                </span>
+                            </span>
+                        </label>
+                        <select id="download_workers">
+                            <option value="1">1 thread</option>
+                            <option value="3">3 threads</option>
+                            <option value="5" selected>5 threads</option>
+                            <option value="10">10 threads</option>
+                        </select>
+                    </div>
+
+                    <div class="field">
+                        <label for="delay">
+                            Delay (sec)
+                            <span class="help-icon">?
+                                <span class="tooltip">
+                                    Delay before downloading the next image.<br><br>
+                                    <strong>0</strong>: No delay (high risk of ban)<br>
+                                    <strong>1.0</strong>: Default (Safe)<br>
+                                    <strong>&gt; 2.0</strong>: Extra safe for strict websites
+                                </span>
+                            </span>
+                        </label>
+                        <input type="number" id="delay" value="1.0" step="0.1" min="0">
+                    </div>
+
+                    <div class="toggle-row" style="margin-top: auto;">
+                        <span>Verbose Log</span>
+                        <label class="toggle">
+                            <input type="checkbox" id="verbose">
+                            <div class="toggle-track"></div>
+                        </label>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Row 2: Upscale + Resize -->
+            <div class="grid-2">
+
+                <!-- Upscale Section -->
+                <div class="card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div class="card-title">Upscale (AMD & Nvidia)</div>
+                        <label class="toggle">
+                            <input type="checkbox" id="upscale_enabled" unchecked>
+                            <div class="toggle-track"></div>
+                        </label>
+                    </div>
+
+                    <div class="field-row">
+                        <div class="field">
+                            <label for="upscale_ratio">
+                                Upscaling
+                                <span class="help-icon">?
+                                    <span class="tooltip">
+                                        <strong>1x</strong>: No upscaling (denoise only)<br>
+                                        <strong>2x</strong>: Recommended (1000px → 2000px)<br>
+                                        <strong>4x</strong>: For very small images<br>
+                                        <strong>8x+</strong>: Extreme, very large files and longer processing time
+                                    </span>
+                                </span>
+                            </label>
+                            <select id="upscale_ratio">
+                                <option value="1">1x</option>
+                                <option value="2" selected>2x</option>
+                                <option value="4">4x</option>
+                                <option value="8">8x</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label for="denoise_level">
+                                Denoise Strength
+                                <span class="help-icon">?
+                                    <span class="tooltip">
+                                        <strong>None</strong>: No denoising (upscale only)<br>
+                                        <strong>0</strong>: Weak (image is already clean)<br>
+                                        <strong>1</strong>: Medium (recommended, standard for manga)<br>
+                                        <strong>2</strong>: High (noisy/grainy images)<br>
+                                        <strong>3</strong>: Highest (very poor quality, heavy noise)
+                                    </span>
+                                </span>
+                            </label>
+                            <select id="denoise_level">
+                                <option value="-1">None</option>
+                                <option value="0">0</option>
+                                <option value="1" selected>1</option>
+                                <option value="2">2</option>
+                                <option value="3">3</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="field-row">
+                        <div class="field">
+                            <label for="upscale_workers">
+                                Workers
+                                <span class="help-icon">?
+                                    <span class="tooltip">
+                                        Number of images processed for upscaling simultaneously.<br><br>
+                                        <strong>1</strong>: ~1 GB VRAM (safe for most GPUs)<br>
+                                        <strong>3</strong>: ~2–3 GB VRAM (recommended)<br>
+                                        <strong>5</strong>: ~4–5 GB VRAM (high performance GPUs)<br>
+                                        <strong>10</strong>: ~8+ GB VRAM (very high VRAM GPUs)
+                                    </span>
+                                </span>
+                            </label>
+                            <select id="upscale_workers">
+                                <option value="1">1 worker</option>
+                                <option value="3" selected>3 workers</option>
+                                <option value="5">5 workers</option>
+                                <option value="10">10 workers</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <label for="waifu2x_path">Waifu2x Path</label>
+                            <div class="input-with-btn">
+                                <input type="text" id="waifu2x_path" placeholder="Auto-detect" oninput="checkWaifu2x()">
+                                <button type="button" class="btn-browse" onclick="browseWaifu2x()">Browse</button>
+                            </div>
+                            <div id="waifu2x_status" class="status-badge status-checking">Checking...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Resize -->
+                <div class="card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div class="card-title">Resize (Compression)</div>
+                        <label class="toggle">
+                            <input type="checkbox" id="resize_enabled" checked>
+                            <div class="toggle-track"></div>
+                        </label>
+                    </div>
+
+                    <div class="field">
+                        <label for="resize_width">Max Width (px)</label>
+                        <input type="number" id="resize_width" value="1600">
+                    </div>
+
+                    <div class="field" style="margin-top: 2px;">
+                        <label>JPEG Quality</label>
+                        <div class="range-row">
+                            <input type="range" id="resize_quality" min="10" max="100" value="95">
+                            <span class="range-val"><span id="quality_val">95</span>%</span>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Row 3: Slice + Console Output -->
+            <div class="grid-2">
+
+                <!-- Slice -->
+                <div class="card" style="align-self: flex-start; width: 100%;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div class="card-title">Slice</div>
+                        <label class="toggle">
+                            <input type="checkbox" id="slice_enabled">
+                            <div class="toggle-track"></div>
+                        </label>
+                    </div>
+
+                    <div class="field">
+                        <label for="slice_height">
+                            Max Height (px)
+                            <span class="help-icon">?<span class="tooltip">Mencegah file gagal dimuat di viewer ponsel
+                                    dengan memotong gambar panjang (webtoon/manhwa).<br><br><strong>2400-3000px</strong>
+                                    sangat direkomendasikan.</span></span>
+                        </label>
+                        <input type="number" id="slice_height" value="2400">
+                    </div>
+                </div>
+
+                <!-- Console -->
+                <div class="console">
+                    <div class="console-header">
+                        <span>Console</span>
+                        <div class="console-status" id="ws_status"></div>
+                    </div>
+                    <div id="terminal">Waiting for action...</div>
+                </div>
+
+            </div>
+
+            <!-- Progress Tracking (above actions) -->
+            <div class="progress-section">
+
+                <div class="progress-item">
+                    <div class="progress-meta">
+                        <span class="progress-label" id="dl_label">Download</span>
+                        <span class="progress-filename" id="dl_file">—</span>
+                    </div>
+                    <div class="progress-track">
+                        <div class="progress-fill" id="dl_fill"></div>
+                    </div>
+                </div>
+
+                <div class="progress-item">
+                    <div class="progress-meta">
+                        <span class="progress-label" id="up_label">Upscale</span>
+                        <span class="progress-filename" id="up_file">—</span>
+                    </div>
+                    <div class="progress-track">
+                        <div class="progress-fill" id="up_fill"></div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Actions -->
+            <div class="actions">
+                <button type="submit" id="startBtn" class="btn btn-primary">Start Scraping</button>
+                <button type="button" id="abortBtn" class="btn btn-danger" disabled>Abort</button>
+            </div>
+
+        </form>
+
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+
+</html>

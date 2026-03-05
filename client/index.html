@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/kodo_500.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kōdo</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #0b0b0f;
+      color: #fff;
+      height: 100vh;
+      width: 100vw;
+      font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    #root {
+      width: 100%;
+      height: 100%;
+    }
+
+    .kodo-boot-splash {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      height: 100%;
+      width: 100%;
+      animation: bootFadeIn 0.4s ease-out forwards;
+    }
+
+    .kodo-boot-logo {
+      width: 72px;
+      height: 72px;
+      animation: bootPulse 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      filter: drop-shadow(0 0 15px rgba(255, 255, 255, 0.1));
+    }
+
+    .kodo-boot-text {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.8);
+      margin-left: 0.3em;
+      /* optical alignment for tracking */
+    }
+
+    @keyframes bootPulse {
+      0% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.6;
+        transform: scale(0.92);
+        filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.05));
+      }
+
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    @keyframes bootFadeIn {
+      0% {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      100% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="root">
+    <div class="kodo-boot-splash">
+      <img src="/kodo_500.svg" class="kodo-boot-logo" alt="Kōdo" />
+      <div class="kodo-boot-text">KŌDO</div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+
+</html>
