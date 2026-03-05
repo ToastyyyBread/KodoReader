@@ -1,4 +1,3 @@
-<img width="1919" height="1020" alt="image" src="https://github.com/user-attachments/assets/e1a6f4b8-9964-4e6a-b5f2-ea83cc99ca24" /><div align="center">
   <img src="/assets/Screenshot/Library.png" alt="Kōdo Library" />
   
   # Kōdo Reader
