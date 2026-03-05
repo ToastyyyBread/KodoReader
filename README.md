@@ -15,34 +15,45 @@
 
 <p align="center">
   <br>
-  <b>Kōdo</b> is a modern desktop application built to be your ultimate local manga and manhwa companion. With a beautifully crafted UI, seamless metadata caching, dynamic pathing, and built-in AI upscaling directly on your machine, it delivers a premium reading experience without relying on cloud services for your local files.
+  <b>Kōdo</b> is a desktop reader for local manga and manhwa. It includes a modern UI, fast metadata caching, flexible library paths, and built-in AI upscaling that runs locally on your machine.
 </p>
 
-## ✨ Highlights & Features
+## Highlights & Features
 
-### 📚 Intelligent Library Management
-- **Lightning-Fast Cold Starts**: Reads instantly from lightweight `meta.json` caching while smoothly refreshing true library data asynchronously in the background. No more staring at endless loading spinners.
-- **Dynamic File Pathing**: Your series don't need to live in one rigid folder. Kodo maps locally stored manga/manhwa from **anywhere** on your PC seamlessly. 
-- **Version Control**: Keep multiple versions (raws, different scanlations, upscaled variants) of the same series grouped neatly.
+### Intelligent Library Management
 
-### 🤖 Built-in AI Upscaling & Compression
-- **Waifu2x & RealESRGAN Integration**: Supercharge low-resolution scans natively.
-- **Auto-Detection Model Pipeline**: Automatically detects your AI executables inside the `AppData/kodo/packages/upscale_package` paths without messy manual configuration.
-- **Direct Model Download**: Instantly fetch the necessary AI models via configured R2 Cloudflare buckets directly from the app Settings page with full progress tracking.
+- **Fast Library Loading**  
+  Uses lightweight `meta.json` caching so the library appears instantly while the real data refreshes in the background.
+- **Flexible Library Paths**  
+  Your series don't need to live in a single folder. Kōdo can map manga or manhwa stored anywhere on your PC.
+- **Multiple Versions Support**  
+  Keep different versions of the same series (raws, scanlations, upscaled versions) grouped together.
 
-### 📖 Premium Reading Experience
-- **Sleek, Modern UI**: Enjoy an aesthetic, responsive React interface styled with seamless themes.
-- **Read Progress Tracking**: Resume exactly where you left off. Kodo remembers your read progress per series and per version.
-- **Auto-Extraction**: Reads directly from CBZ/ZIP archives or nested directory structures natively.
+### Built-in AI Upscaling
+
+- **Waifu2x & RealESRGAN Support**  
+  Upscale low-resolution manga images using Waifu2x or RealESRGAN directly on your machine.
+- **Automatic Model Detection**  
+  Kōdo automatically detects installed AI executables inside  
+  `AppData/kodo/packages/upscale_package`.
+- **Model Download from the App**  
+  Required models can be downloaded directly from the Settings page with progress tracking.
+
+### Reading Experience
+
+- **Modern UI**  
+  A clean and responsive interface built with React.
+- **Reading Progress Tracking**  
+  Kōdo remembers where you left off for each series and version.
+- **Archive Support**  
+  Read directly from `.cbz`, `.zip`, or regular folder structures without manual extraction.
 
 ---
 
-## 📸 Screenshots
-
-*(Replace the placeholder URLs with actual screenshots of your app once available!)*
+## Screenshots
 
 <details markdown="1">
-  <summary><b>🖼️ Expand to View Screenshots</b></summary>
+  <summary><b> Expand to View Screenshots</b></summary>
   <br/>
 
 | Library View | Advanced AI Upscaler |
@@ -62,7 +73,7 @@ Kōdo utilizes a highly-performant trifecta:
 - **React.js** - Driving a beautiful, seamless, client-side rendered UI.
 - **Node.js/Express** - Working as a robust internal backend server for heavy I/O handling, metadata construction, and AI pipeline orchestration.
 
-## 🚀 Getting Started
+## Getting Started
 
 Follow these steps to clone and build the application locally.
 
