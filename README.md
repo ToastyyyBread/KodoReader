@@ -1,8 +1,7 @@
   <img src="/assets/Screenshot/Library.png" alt="Kōdo Library" />
   
   <div align="center">
-  **Kōdo Reader**
-  
+
   **A Lightning-Fast, Feature-Rich Local Manga & Manhwa Reader with Built-in AI Upscaling.**
 
   [![Tauri](https://img.shields.io/badge/tauri-%2324C8DB.svg?style=for-the-badge&logo=tauri&logoColor=white)](https://tauri.app/)
