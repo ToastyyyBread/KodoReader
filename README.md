@@ -14,7 +14,7 @@
 
 <p align="center">
   <br>
-  <b>Kōdo</b> is a desktop reader for local manga and manhwa. It includes a modern UI, fast metadata caching, flexible library paths, and built-in AI upscaling that runs locally on your machine.
+  <b>Kōdo</b> is a open source desktop reader for local manga and manhwa. It includes a modern UI, fast metadata caching, flexible library paths, and built-in AI upscaling that runs locally on your machine.
 </p>
 
 ## Features
