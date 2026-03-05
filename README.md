@@ -18,6 +18,22 @@
   <b>Kōdo</b> is a desktop reader for local manga and manhwa. It includes a modern UI, fast metadata caching, flexible library paths, and built-in AI upscaling that runs locally on your machine.
 </p>
 
+## Features
+
+- [x] Modern UI
+- [x] Fast library loading with metadata caching
+- [x] Flexible library paths
+- [x] Multiple versions support (raws, scanlations, upscaled)
+- [x] Built-in AI upscaling (Waifu2x / RealESRGAN)
+- [x] Built-in Series CBZ Compressor (Sharp + MozJepg)
+- [x] Advanced bookmarks with screenshot previews
+- [x] Smart backups with password encryption and custom .kdba format
+- [x] Chapter rename
+- [x] Categories for organizing series
+- [x] Reading progress tracking
+- [x] CBZ / ZIP archive support
+- [ ] PDF support (soon)
+
 ## Highlights & Features
 
 ### Intelligent Library Management
