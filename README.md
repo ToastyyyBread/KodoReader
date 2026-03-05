@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="/assets/Screenshoot/Library.png" alt="Kōdo Library" />
+  <img src="/assets/Screenshot/Library.png" alt="Kōdo Library" />
   
   # Kōdo Reader
   
