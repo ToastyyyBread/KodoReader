@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="/assets/kodo_500.png" alt="Kodo Logo" width="200" height="200" />
+  <img src="/assets/Screenshoot/Library.png" alt="Kōdo Library" />
   
   # Kōdo Reader
   
