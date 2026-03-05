@@ -76,7 +76,7 @@
 | :---: | :---: |
 | <img src="/assets/Screenshot/Reader UI.png" alt="Kōdo Reader" /> | <img src="/assets/Screenshot/AI Upscaler Section.png" alt="AI Upscaling" /> |
 | **Reader Interface** | **Settings & Metadata** |
-| <img src="/assets/Screenshot/Series Compressor Section.png" alt="Compressor" /> | <img src="/assets/Screenshot/Chapter Renamer.png" alt="Chapter Renamer" /> | <img src="/assets/Screenshot/Manga Details.png" alt="Manga Details" />
+| <img src="/assets/Screenshot/Series Compressor Section.png" alt="Compressor" /> | <img src="/assets/Screenshot/Chapter Renamer.png" alt="Chapter Renamer" /> | **Manga Details** |<img src="/assets/Screenshot/Manga Details.png" alt="Manga Details" /> |
 
 </details>
 
