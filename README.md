@@ -68,10 +68,17 @@
 
 ## Screenshots
 
-<img src="/assets/Screenshot/Reader Ui.png" alt="Kōdo Library" />
-<img src="/assets/Screenshot/AI Upscaler Section.png" alt="AI Upscaling" />
-<img src="/assets/Screenshot/Series Compressor Section.png" alt="Compressor" />
-<img src="/assets/Screenshot/Chapter Renamer.png" alt="Chapter Renamer" />
+<details markdown="1">
+  <summary><b> Expand to View Screenshots</b></summary>
+  <br/>
+
+| Library View | Advanced AI Upscaler |
+| :---: | :---: |
+| <img src="/assets/Screenshot/Reader Ui.png" alt="Kōdo Library" /> | <img src="/assets/Screenshot/AI Upscaler Section.png" alt="AI Upscaling" /> |
+| **Reader Interface** | **Settings & Metadata** |
+| <img src="/assets/Screenshot/Series Compressor Section.png" alt="Compressor" /> | <img src="/assets/Screenshot/Chapter Renamer.png" alt="Chapter Renamer" /> |
+
+</details>
 
 ---
 
