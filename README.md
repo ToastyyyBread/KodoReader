@@ -1,7 +1,7 @@
   <img src="/assets/Screenshot/Library.png" alt="Kōdo Library" />
   
   <div align="center">
-  # Kōdo Reader
+  Kōdo Reader
   
   **A Lightning-Fast, Feature-Rich Local Manga & Manhwa Reader with Built-in AI Upscaling.**
 
