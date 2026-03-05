@@ -1,4 +1,4 @@
-<div align="center">
+<img width="1919" height="1020" alt="image" src="https://github.com/user-attachments/assets/e1a6f4b8-9964-4e6a-b5f2-ea83cc99ca24" /><div align="center">
   <img src="/assets/Screenshot/Library.png" alt="Kōdo Library" />
   
   # Kōdo Reader
@@ -76,7 +76,7 @@
 | :---: | :---: |
 | <img src="/assets/Screenshot/Reader UI.png" alt="Kōdo Reader" /> | <img src="/assets/Screenshot/AI Upscaler Section.png" alt="AI Upscaling" /> |
 | **Reader Interface** | **Settings & Metadata** |
-| <img src="/assets/Screenshot/Series Compressor Section.png" alt="Compressor" /> | <img src="/assets/Screenshot/Chapter Renamer.png" alt="Chapter Renamer" /> |
+| <img src="/assets/Screenshot/Series Compressor Section.png" alt="Compressor" /> | <img src="/assets/Screenshot/Chapter Renamer.png" alt="Chapter Renamer" /> | <img src="/assets/Screenshot/Manga Details.png" alt="Manga Details" />
 
 </details>
 
