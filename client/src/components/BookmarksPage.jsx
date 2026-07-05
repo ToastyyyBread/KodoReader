@@ -28,6 +28,7 @@ const BookmarkCard = ({ bm, onNavigate, onDelete, onToggleFavorite }) => {
 
     return (
         <div
+            className="bookmark-card"
             onClick={() => onNavigate(bm)}
             style={{
                 background: 'var(--surface)',
@@ -35,22 +36,21 @@ const BookmarkCard = ({ bm, onNavigate, onDelete, onToggleFavorite }) => {
                 overflow: 'hidden',
                 cursor: 'pointer',
                 border: `1px solid ${isFav ? 'rgba(245,158,11,0.35)' : 'var(--border)'}`,
-                transition: 'transform 0.15s, box-shadow 0.15s',
+                transition: 'box-shadow 0.15s',
                 position: 'relative',
             }}
             onMouseEnter={e => {
-                e.currentTarget.style.transform = 'translateY(-2px)';
                 e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.3)';
             }}
             onMouseLeave={e => {
-                e.currentTarget.style.transform = '';
                 e.currentTarget.style.boxShadow = '';
             }}
         >
             {/* Thumbnail */}
-            <div style={{ width: '100%', height: 220, background: 'var(--surface2)', overflow: 'hidden' }}>
+            <div className="bookmark-card-thumb" style={{ width: '100%', height: 220 }}>
                 {bm.thumbnail
                     ? <img
+                        className="bookmark-card-thumb-img"
                         src={bm.thumbnail.startsWith('http') ? bm.thumbnail : apiUrl(bm.thumbnail)}
                         alt="Bookmark"
                         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
@@ -109,13 +109,37 @@ const BookmarkCard = ({ bm, onNavigate, onDelete, onToggleFavorite }) => {
 };
 
 /* ── Main component ──────────────────────────────────────────── */
+const usePersistentState = (key, defaultValue) => {
+    const [value, setValue] = useState(() => {
+        try {
+            const item = localStorage.getItem(key);
+            return item ? JSON.parse(item) : defaultValue;
+        } catch (error) {
+            return defaultValue;
+        }
+    });
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch (error) {
+            console.error("Error setting localStorage", error);
+        }
+    }, [key, value]);
+
+    return [value, setValue];
+};
+
 const BookmarksPage = ({ onNavigateToBookmark }) => {
     const [bookmarks, setBookmarks] = useState([]);
     const [selectedManga, setSelectedManga] = useState(null);
     const [apiManga, setApiManga] = useState([]);
     const [search, setSearch] = useState('');
     const [activeFilter, setActiveFilter] = useState('All');   // series filter on main view
-    const [favFilter, setFavFilter] = useState('All');          // 'All' | 'Favorites'
+    const [favFilter, setFavFilter] = usePersistentState('kodo_bm_fav_filter', 'All');
+    const [chapterFilter, setChapterFilter] = usePersistentState('kodo_bm_chapter_filter', 'All');
+    const [chapterOrder, setChapterOrder] = usePersistentState('kodo_bm_chapter_order', 'Descending');
+    const [pageOrder, setPageOrder] = usePersistentState('kodo_bm_page_order', 'Ascending');
 
     const loadBookmarks = useCallback(async () => {
         const data = await fetchBookmarks(apiUrl(''));
@@ -196,72 +220,146 @@ const BookmarksPage = ({ onNavigateToBookmark }) => {
             chapterMap[ch].push(bm);
         });
 
-        // Sort chapters descending
+        // Build options for Chapter filter
+        const availableChapters = Object.keys(chapterMap);
+        const chapterOptions = [
+            { value: 'All', label: 'All Chapters' },
+            ...availableChapters
+                .sort((a, b) => extractChapterNumber(a) - extractChapterNumber(b))
+                .map(ch => ({ value: ch, label: ch }))
+        ];
+
+        const effectiveChapterFilter = (chapterFilter !== 'All' && !availableChapters.includes(chapterFilter)) ? 'All' : chapterFilter;
+
+        // Process Groups (Filter and sort chapters)
         const allChapterGroups = Object.entries(chapterMap)
+            .filter(([chapterId]) => effectiveChapterFilter === 'All' || chapterId === effectiveChapterFilter)
             .map(([chapterId, items]) => ({
                 chapterId,
                 chapterNum: extractChapterNumber(chapterId),
-                items: items.sort((a, b) => (a.page ?? 0) - (b.page ?? 0)),
-            }))
-            .sort((a, b) => b.chapterNum - a.chapterNum);
+                items: items,
+            }));
 
-        // Apply favorites filter to chapter groups
-        const chapterGroups = favFilter === 'Favorites'
-            ? allChapterGroups
-                .map(cg => ({ ...cg, items: cg.items.filter(bm => bm.favorite) }))
-                .filter(cg => cg.items.length > 0)
-            : allChapterGroups;
+        allChapterGroups.sort((a, b) => {
+            return chapterOrder === 'Ascending'
+                ? a.chapterNum - b.chapterNum
+                : b.chapterNum - a.chapterNum;
+        });
+
+        // Sort pages and apply favFilter
+        const chapterGroups = allChapterGroups
+            .map(cg => {
+                let sortedItems = [...cg.items];
+                if (pageOrder === 'Ascending') {
+                    sortedItems.sort((a, b) => (a.page ?? 0) - (b.page ?? 0));
+                } else {
+                    sortedItems.sort((a, b) => (b.page ?? 0) - (a.page ?? 0));
+                }
+
+                if (favFilter === 'Favorites') {
+                    sortedItems = sortedItems.filter(bm => bm.favorite);
+                }
+                return { ...cg, items: sortedItems };
+            })
+            .filter(cg => cg.items.length > 0);
 
         const totalBookmarks = group.items.length;
         const favCount = group.items.filter(b => b.favorite).length;
 
         return (
-            <div style={{ padding: '0 0 32px' }}>
-                {/* Sticky top bar */}
-                <div style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg)' }}>
-                    <div className="topbar" style={{ position: 'static' }}>
-                        <button
-                            onClick={() => setSelectedManga(null)}
-                            style={{
-                                background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 13.5,
-                            }}
-                        >
-                            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-                            </svg>
-                            Back
-                        </button>
+            <div className="bookmarks-page" style={{ padding: '0 0 32px' }}>
+                {/* Sticky Header + Toolbar */}
+                <div style={{ position: 'sticky', top: 0, zIndex: 10, display: 'flex', flexDirection: 'column' }}>
+                    {/* Header Row */}
+                    <div style={{ background: 'var(--bg)' }}>
+                        <div className="topbar" style={{ position: 'static' }}>
+                            <button
+                                onClick={() => setSelectedManga(null)}
+                                style={{
+                                    background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 13.5,
+                                }}
+                            >
+                                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                                </svg>
+                                Back
+                            </button>
 
-                        <h2 className="topbar-title" style={{
-                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                            maxWidth: '260px', marginLeft: 16, flexShrink: 1,
-                        }}>
-                            {group.mangaTitle}
-                        </h2>
+                            <h2 className="topbar-title" style={{
+                                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                                maxWidth: '260px', marginLeft: 16, flexShrink: 1,
+                            }}>
+                                {group.mangaTitle}
+                            </h2>
 
-                        <div style={{ marginLeft: 8, fontSize: 12, color: 'var(--muted)', fontWeight: 500, flexShrink: 0 }}>
-                            {totalBookmarks} bookmark{totalBookmarks !== 1 ? 's' : ''}
-                            {favCount > 0 && (
-                                <span style={{ marginLeft: 6, color: '#f59e0b' }}>
-                                    · ★ {favCount}
-                                </span>
-                            )}
+                            <div style={{ marginLeft: 8, fontSize: 12, color: 'var(--muted)', fontWeight: 500, flexShrink: 0 }}>
+                                {totalBookmarks} bookmark{totalBookmarks !== 1 ? 's' : ''}
+                                {favCount > 0 && (
+                                    <span style={{ marginLeft: 6, color: '#f59e0b' }}>
+                                        · ★ {favCount}
+                                    </span>
+                                )}
+                            </div>
+
+                            <div className="topbar-spacer" />
                         </div>
+                    </div>
 
-                        <div className="topbar-spacer" />
-
-                        {/* Favorites filter dropdown */}
-                        <div style={{ width: 145, flexShrink: 0 }}>
+                    {/* Dedicated Bookmark Toolbar Row */}
+                    <div style={{
+                        background: 'var(--bg)',
+                        borderBottom: '1px solid var(--border)',
+                        padding: '10px 40px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px'
+                    }}>
+                        <div style={{ width: 150 }}>
                             <CustomDropdown
-                                value={favFilter}
-                                onChange={setFavFilter}
+                                value={effectiveChapterFilter}
+                                onChange={setChapterFilter}
+                                direction="down"
+                                items={chapterOptions}
+                            />
+                        </div>
+                        <div style={{ width: 145 }}>
+                            <CustomDropdown
+                                prefix="Ch."
+                                value={chapterOrder}
+                                onChange={setChapterOrder}
                                 direction="down"
                                 items={[
-                                    { value: 'All', label: 'All' },
-                                    { value: 'Favorites', label: 'Favorites Only' },
+                                    { value: 'Ascending', label: 'Ascending ↑' },
+                                    { value: 'Descending', label: 'Descending ↓' },
                                 ]}
                             />
+                        </div>
+                        <div style={{ width: 145 }}>
+                            <CustomDropdown
+                                prefix="Page"
+                                value={pageOrder}
+                                onChange={setPageOrder}
+                                direction="down"
+                                items={[
+                                    { value: 'Ascending', label: 'Ascending ↑' },
+                                    { value: 'Descending', label: 'Descending ↓' },
+                                ]}
+                            />
+                        </div>
+
+                        <div style={{ marginLeft: 'auto', display: 'flex' }}>
+                            <div style={{ width: 140 }}>
+                                <CustomDropdown
+                                    value={favFilter}
+                                    onChange={setFavFilter}
+                                    direction="down"
+                                    items={[
+                                        { value: 'All', label: 'All' },
+                                        { value: 'Favorites', label: 'Favorites Only' },
+                                    ]}
+                                />
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -353,7 +451,7 @@ const BookmarksPage = ({ onNavigateToBookmark }) => {
     }
 
     return (
-        <div style={{ padding: '0 0 32px' }}>
+        <div className="bookmarks-page" style={{ padding: '0 0 32px' }}>
             <div style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg)' }}>
                 {/* Top bar */}
                 <div className="topbar" style={{ position: 'static' }}>
@@ -415,7 +513,7 @@ const BookmarksPage = ({ onNavigateToBookmark }) => {
                         >
                             <div className="manga-card-img">
                                 {cover
-                                    ? <img src={cover} alt={group.mangaTitle} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    ? <img className="fix-jagged" src={cover} alt={group.mangaTitle} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                     : <div style={{ width: '100%', height: '100%', background: 'var(--surface2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontSize: 12 }}>{group.mangaTitle}</div>
                                 }
                             </div>

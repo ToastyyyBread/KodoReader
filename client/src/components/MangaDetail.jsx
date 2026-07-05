@@ -118,6 +118,37 @@ const MangaDetail = ({ manga, onSelectChapter, onBack }) => {
         fetchDetails();
     }, [manga.id]);
 
+    // ── Keyboard Navigation ──────────────────────────────────
+    const latestDetailCallbacks = useRef({ onSelectChapter, readProgress, details, activeVersionId, displayChapters, showEdit, confirmRewatch });
+    latestDetailCallbacks.current = { onSelectChapter, readProgress, details, activeVersionId, displayChapters, showEdit, confirmRewatch };
+
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Enter') {
+                const target = e.target;
+                if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+
+                const { showEdit, confirmRewatch, details, activeVersionId, displayChapters, onSelectChapter } = latestDetailCallbacks.current;
+                if (showEdit || confirmRewatch) return;
+                if (document.querySelector('.modal') || document.querySelector('[role="dialog"]')) return;
+
+                if (!details) return;
+
+                setReadProgress(getMangaProgress(manga.id));
+                const activeProgress = details?.progressByVersion?.[activeVersionId] || (details.progress?.versionId === activeVersionId ? details.progress : null);
+
+                if (activeProgress?.chapterId) {
+                    onSelectChapter(activeProgress.chapterId, displayChapters, activeVersionId);
+                } else if (displayChapters?.length > 0) {
+                    onSelectChapter(displayChapters[0], displayChapters, activeVersionId);
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [manga.id]);
+
     // Reload progress every time the detail page shows (user may have just finished reading)
     useEffect(() => {
         const load = () => setReadProgress(getMangaProgress(manga.id));

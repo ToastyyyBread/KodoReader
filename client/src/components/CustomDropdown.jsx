@@ -10,7 +10,7 @@ import { createPortal } from 'react-dom';
  *   direction – 'down' (default) | 'up'
  *   className – optional wrapper class
  */
-const CustomDropdown = ({ items, value, onChange, direction = 'down', className = '' }) => {
+const CustomDropdown = ({ items, value, onChange, direction = 'down', className = '', prefix = '' }) => {
     const [open, setOpen] = useState(false);
     const [menuPos, setMenuPos] = useState({ top: 0, left: 0, width: 0, bottom: 0 });
     const triggerRef = useRef();
@@ -96,7 +96,8 @@ const CustomDropdown = ({ items, value, onChange, direction = 'down', className 
                 onClick={() => open ? setOpen(false) : openMenu()}
                 style={{ width: '100%' }}
             >
-                <span className="custom-dropdown-value">
+                <span className="custom-dropdown-value" style={{ display: 'flex', alignItems: 'center', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                    {prefix && <span style={{ opacity: 0.6, marginRight: 6 }}>{prefix}</span>}
                     {activeItem?.label || '—'}
                 </span>
                 <svg width="10" height="10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"

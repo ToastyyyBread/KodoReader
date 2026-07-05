@@ -158,6 +158,7 @@ const CBZ_CACHE = path.join(APP_ROOT, 'data', 'cbz-cache');
 const COVER_UPLOAD_TMP = path.join(APP_ROOT, 'data', 'cover-upload-tmp');
 const BOOKMARK_DIR = path.join(APP_ROOT, 'data', 'bookmark', 'saved');
 const BOOKMARK_JSON_PATH = path.join(APP_ROOT, 'data', 'bookmark', 'bookmarks.json');
+const COVER_FILE_RE = /^cover\.(jpg|jpeg|png|webp|avif)$/i;
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -178,6 +179,7 @@ if (fs.existsSync(clientDistPath)) {
 
 // ── Library cache ─────────────────────────────────────────
 let _libraryCache = null;
+let _libraryFullCacheReady = false; // true only after a real filesystem scan completes
 let _libraryCacheBuilding = false;
 
 const buildLibraryList = async () => {
@@ -202,6 +204,15 @@ const buildLibraryList = async () => {
         } catch { }
     }));
 
+    // Helper: run a promise with a timeout; on timeout return fallback value
+    const withTimeout = (promise, ms, fallback) => {
+        const timer = new Promise(resolve => setTimeout(() => resolve(fallback), ms));
+        return Promise.race([promise, timer]);
+    };
+
+    // Per-manga scan timeout — prevents huge directories from blocking the build.
+    const MANGA_SCAN_TIMEOUT_MS = 10000;
+
     const list = (await Promise.all(Object.keys(meta).map(async (name) => {
         const mangaDir = path.join(MANGA_PATH, name);
         const m = meta[name] || {};
@@ -211,35 +222,74 @@ const buildLibraryList = async () => {
             if (hiddenPaths.has((await fs.realpath(sourceDir)).toLowerCase())) return null;
         } catch { }
 
-        // Run chapter scan, cover search, and stat in parallel
-        const [chapters, cover, dirStat] = await Promise.all([
-            getChapters(sourceDir),
-            findCover(mangaDir, sourceDir, name),
-            fs.stat(sourceDir).catch(() => null),
-        ]);
+        // ── Fast path: mtime-based cache check ───────────────────────────────
+        // Get current directory mtime with a short timeout (3s) so we don't
+        // hang on network paths.
+        let dirMtime = 0;
+        try {
+            const statResult = await withTimeout(fs.stat(sourceDir), 3000, null);
+            if (statResult) dirMtime = statResult.mtimeMs;
+        } catch { }
 
-        const lastChapterAdded = dirStat ? dirStat.mtimeMs : 0;
+        const cachedMtime = m._cachedLastChapterAdded || 0;
+        // Cache hit: directory is unchanged AND we previously scanned it successfully
+        // (cachedMtime > 0 means we've scanned at least once and stored a real mtime)
+        const dirUnchanged = cachedMtime > 0
+            && dirMtime > 0
+            && Math.abs(dirMtime - cachedMtime) < 1000
+            && (m._cachedChapterCount !== undefined && m._cachedChapterCount !== null);
 
+        let resolvedChapterCount, resolvedCover, lastChapterAdded;
+
+        if (dirUnchanged) {
+            // ── Directory unchanged → use persisted cache, no FS scan ─────────
+            resolvedChapterCount = m._cachedChapterCount || 0;
+            resolvedCover = m._cachedCover || null;
+            lastChapterAdded = cachedMtime;
+        } else {
+            // ── Directory changed or not yet cached → full scan ───────────────
+            const [chapters, cover] = await Promise.all([
+                withTimeout(getChapters(sourceDir), MANGA_SCAN_TIMEOUT_MS, null),
+                withTimeout(findCover(mangaDir, sourceDir, name), MANGA_SCAN_TIMEOUT_MS, undefined),
+            ]);
+
+            resolvedChapterCount = chapters !== null ? chapters.length : (m._cachedChapterCount || 0);
+            resolvedCover = cover !== undefined ? cover : (m._cachedCover || null);
+            lastChapterAdded = dirMtime || (m._cachedLastChapterAdded || 0);
+        }
+
+        // ── Versions ─────────────────────────────────────────────────────────
         let versionsWithCovers = [];
         if (Array.isArray(m.versions)) {
             versionsWithCovers = await Promise.all(m.versions.map(async (v) => {
                 const vManagedDir = path.join(mangaDir, 'versions', v.id);
                 const vSourceDir = resolveVersionDir(name, v.id, meta);
-                let vCover = null;
-                let vChapterCount = 0;
+                let vCover = v._cachedCover || null;
+                let vChapterCount = v._cachedChapterCount || 0;
                 try {
-                    await fs.access(vSourceDir);
-                    // Run version cover and chapter scan in parallel
-                    const [vc, vch] = await Promise.all([
-                        findCover(vManagedDir, vSourceDir, name, 'versions/' + v.id),
-                        getChapters(vSourceDir),
-                    ]);
-                    vCover = vc;
-                    vChapterCount = vch.length;
+                    // Use stat for both existence check and mtime (one call instead of two)
+                    const vStat = await withTimeout(fs.stat(vSourceDir), 2000, null);
+                    if (!vStat) throw new Error('inaccessible'); // timed out or not found
+
+                    const vDirMtime = vStat.mtimeMs;
+                    const vCachedMtime = v._cachedLastChapterAdded || 0;
+                    const vDirUnchanged = vCachedMtime > 0 && vDirMtime > 0
+                        && Math.abs(vDirMtime - vCachedMtime) < 1000
+                        && (v._cachedChapterCount !== undefined && v._cachedChapterCount !== null);
+
+                    if (!vDirUnchanged) {
+                        const [vc, vch] = await Promise.all([
+                            withTimeout(findCover(vManagedDir, vSourceDir, name, 'versions/' + v.id), MANGA_SCAN_TIMEOUT_MS, undefined),
+                            withTimeout(getChapters(vSourceDir), MANGA_SCAN_TIMEOUT_MS, null),
+                        ]);
+                        if (vc !== undefined) vCover = vc;
+                        if (vch !== null) vChapterCount = vch.length;
+                    }
                 } catch { }
                 return { ...v, cover: vCover, chapterCount: vChapterCount };
             }));
         }
+
         return {
             id: name,
             title: m.title || name.replace(/[-_]/g, ' '),
@@ -252,9 +302,9 @@ const buildLibraryList = async () => {
             description: m.description || '',
             releaseYear: m.releaseYear || '',
             isNsfw: !!m.isNsfw,
-            chapterCount: chapters.length,
+            chapterCount: resolvedChapterCount,
             versions: versionsWithCovers,
-            cover,
+            cover: resolvedCover,
             progress: m.progress || null,
             progressByVersion: m.progressByVersion || {},
             readChapters: m.readChapters || [],
@@ -273,6 +323,7 @@ const refreshLibraryCache = async () => {
     _libraryCachePromise = (async () => {
         try {
             _libraryCache = await buildLibraryList();
+            _libraryFullCacheReady = true;
         } catch (err) {
             console.error('Library cache build failed:', err.message);
         } finally {
@@ -283,27 +334,27 @@ const refreshLibraryCache = async () => {
     return _libraryCachePromise;
 };
 
-const invalidateLibraryCache = () => { _libraryCache = null; };
+const invalidateLibraryCache = () => { _libraryCache = null; _libraryFullCacheReady = false; };
 
-// Returns a promise that resolves when the library cache is ready
-const waitForLibraryCache = async (timeoutMs = 30000) => {
-    if (_libraryCache) return _libraryCache;
-    ensureLibraryCacheWarmup();
+// Returns a promise that resolves when the FULL filesystem-scanned cache is ready
+const waitForLibraryCache = async (timeoutMs = 120000) => {
+    if (_libraryFullCacheReady) return _libraryCache;
     // Wait for the current build to finish
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-        if (_libraryCache) return _libraryCache;
+        if (_libraryFullCacheReady) return _libraryCache;
         if (_libraryCachePromise) {
             await _libraryCachePromise;
-            if (_libraryCache) return _libraryCache;
+            if (_libraryFullCacheReady) return _libraryCache;
         }
         await new Promise(r => setTimeout(r, 200));
     }
-    return _libraryCache; // may be null if timed out
+    return _libraryCache; // return whatever we have (fast or full) on timeout
 };
 
 const ensureLibraryCacheWarmup = () => {
-    if (_libraryCache || _libraryCacheBuilding) return;
+    // Skip if already building or full scan already done
+    if (_libraryCacheBuilding || _libraryFullCacheReady) return;
     refreshLibraryCache()
         .then(() => {
             if (_libraryCache) persistLibraryCacheToMeta(_libraryCache);
@@ -342,26 +393,37 @@ const buildFastLibraryList = () => {
     });
 };
 
-// Persist cached covers/chapter counts into meta so next cold start is instant
+// Persist cached covers/chapter counts into meta so next cold start is instant.
+// IMPORTANT: Write directly to disk (NOT via saveMeta) to avoid invalidating the
+// in-memory library cache that was just freshly built.
 const persistLibraryCacheToMeta = (list) => {
     try {
         const meta = loadMeta();
         let changed = false;
         for (const item of list) {
             if (!meta[item.id]) continue;
-            // Cache main series cover and chapter count
-            if (meta[item.id]._cachedCover !== item.cover || meta[item.id]._cachedChapterCount !== item.chapterCount) {
-                meta[item.id]._cachedCover = item.cover;
-                meta[item.id]._cachedChapterCount = item.chapterCount;
-                meta[item.id]._cachedLastChapterAdded = item.lastChapterAdded;
+            const me = meta[item.id];
+            // Always update all cached fields so the mtime comparison works correctly
+            // even when cover is null (null is a valid cached result).
+            if (
+                me._cachedCover !== item.cover ||
+                me._cachedChapterCount !== item.chapterCount ||
+                me._cachedLastChapterAdded !== item.lastChapterAdded
+            ) {
+                me._cachedCover = item.cover;
+                me._cachedChapterCount = item.chapterCount;
+                me._cachedLastChapterAdded = item.lastChapterAdded;
                 changed = true;
             }
             // Cache version covers and chapter counts
-            if (Array.isArray(item.versions) && Array.isArray(meta[item.id].versions)) {
+            if (Array.isArray(item.versions) && Array.isArray(me.versions)) {
                 for (const itemV of item.versions) {
-                    const metaV = meta[item.id].versions.find(v => v.id === itemV.id);
+                    const metaV = me.versions.find(v => v.id === itemV.id);
                     if (!metaV) continue;
-                    if (metaV._cachedCover !== itemV.cover || metaV._cachedChapterCount !== itemV.chapterCount) {
+                    if (
+                        metaV._cachedCover !== itemV.cover ||
+                        metaV._cachedChapterCount !== itemV.chapterCount
+                    ) {
                         metaV._cachedCover = itemV.cover;
                         metaV._cachedChapterCount = itemV.chapterCount;
                         changed = true;
@@ -369,7 +431,9 @@ const persistLibraryCacheToMeta = (list) => {
                 }
             }
         }
-        if (changed) saveMeta(meta);
+        // Write directly to disk — bypass saveMeta() to avoid calling
+        // invalidateLibraryCache() which would destroy the cache we just built.
+        if (changed) fs.writeJsonSync(META_PATH, meta, { spaces: 2 });
     } catch { }
 };
 
@@ -925,6 +989,7 @@ app.get('/api/manga', async (_req, res) => {
         if (forceRefresh) {
             const list = await buildLibraryList();
             _libraryCache = list;
+            _libraryFullCacheReady = true;
             _libraryCacheBuilding = false;
             persistLibraryCacheToMeta(list);
             res.set('X-Kodo-Library-Cache', 'ready');
@@ -932,30 +997,37 @@ app.get('/api/manga', async (_req, res) => {
             return;
         }
 
-        // If cache is ready, return it instantly
-        if (_libraryCache) {
+        // Full filesystem-scanned cache is ready — return instantly
+        if (_libraryCache && _libraryFullCacheReady) {
             res.set('X-Kodo-Library-Cache', 'ready');
             res.json(_libraryCache);
             return;
         }
 
-        // ?wait=true → block until cache build completes (for cold-start flow)
+        // Fast cache (pre-populated from meta.json at startup) is available —
+        // return it immediately so the UI renders without a spinner, but signal
+        // 'warming' so the client knows to fetch the full data in the background.
+        if (_libraryCache && !_libraryFullCacheReady) {
+            res.set('X-Kodo-Library-Cache', 'warming');
+            res.json(_libraryCache);
+            return;
+        }
+
+        // ?wait=true → block until the full filesystem scan completes
         if (shouldWait) {
             const cached = await waitForLibraryCache();
             if (cached) {
                 res.set('X-Kodo-Library-Cache', 'ready');
                 res.json(cached);
             } else {
-                // Timeout: return fast list as fallback
-                ensureLibraryCacheWarmup();
+                // Timeout: return whatever we have
                 res.set('X-Kodo-Library-Cache', 'warming');
-                res.json(buildFastLibraryList());
+                res.json(_libraryCache || buildFastLibraryList());
             }
             return;
         }
 
-        // Cold start path: return metadata snapshot quickly,
-        // while full filesystem scan runs in the background.
+        // Fallback cold-start path (server was never initialised with fast cache)
         ensureLibraryCacheWarmup();
         res.set('X-Kodo-Library-Cache', 'warming');
         res.json(buildFastLibraryList());
@@ -1912,6 +1984,50 @@ app.get('/api/upscale/preview-images/:jobId', (req, res) => {
     res.json(imagePaths.map(p => `/api/file?path=${encodeURIComponent(p)}`));
 });
 
+// ── BOOKMARK ZIP EXPORT ────────────────────────────────────
+app.post('/api/bookmark/export-zip', async (req, res) => {
+    try {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `bookmarks-backup-${timestamp}.zip`;
+
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+        const archive = archiver('zip', { zlib: { level: 6 } });
+
+        archive.on('error', (err) => {
+            console.error('[Bookmark Export] Archive error:', err);
+            if (!res.headersSent) {
+                res.status(500).json({ error: err.message });
+            } else {
+                res.destroy();
+            }
+        });
+
+        archive.pipe(res);
+
+        // 1. Add bookmarks.json at the root of the ZIP
+        if (fs.existsSync(BOOKMARK_JSON_PATH)) {
+            archive.file(BOOKMARK_JSON_PATH, { name: 'bookmarks.json' });
+        } else {
+            // If missing, include an empty array so restores are valid
+            archive.append(Buffer.from('[]', 'utf8'), { name: 'bookmarks.json' });
+        }
+
+        // 2. Add the entire saved/ folder, preserving its subfolder structure
+        if (fs.existsSync(BOOKMARK_DIR) && fs.statSync(BOOKMARK_DIR).isDirectory()) {
+            archive.directory(BOOKMARK_DIR, 'saved');
+        }
+
+        await archive.finalize();
+    } catch (err) {
+        console.error('[Bookmark Export] Failed:', err);
+        if (!res.headersSent) {
+            res.status(500).json({ error: err.message });
+        }
+    }
+});
+
 // ── BACKUP ENDPOINTS ───────────────────────────────────────
 app.post('/api/backup/export', (req, res) => {
     try {
@@ -1921,7 +2037,65 @@ app.post('/api/backup/export', (req, res) => {
         const meta = loadMeta();
         const categories = loadCategories();
         const bookmarks = loadBookmarks();
-        const encrypted = encryptData({ meta, categories, bookmarks }, password);
+
+        // Embed bookmark screenshot images as base64
+        const bookmarkImages = [];
+        if (fs.existsSync(BOOKMARK_DIR)) {
+            const seriesDirs = fs.readdirSync(BOOKMARK_DIR);
+            for (const sDir of seriesDirs) {
+                const sPath = path.join(BOOKMARK_DIR, sDir);
+                if (fs.statSync(sPath).isDirectory()) {
+                    const files = fs.readdirSync(sPath);
+                    for (const f of files) {
+                        try {
+                            const fp = path.join(sPath, f);
+                            const b64 = fs.readFileSync(fp, 'base64');
+                            bookmarkImages.push({ series: sDir, file: f, data: b64 });
+                        } catch (e) { }
+                    }
+                }
+            }
+        }
+
+        // Embed managed cover images (uploaded covers) as base64
+        const coverImages = [];
+        for (const mangaId of Object.keys(meta)) {
+            const managedDir = path.join(MANGA_PATH, mangaId);
+            if (!fs.existsSync(managedDir)) continue;
+            try {
+                const files = fs.readdirSync(managedDir);
+                for (const f of files) {
+                    if (!COVER_FILE_RE.test(f)) continue;
+                    try {
+                        const fp = path.join(managedDir, f);
+                        if (!fs.statSync(fp).isFile()) continue;
+                        const b64 = fs.readFileSync(fp, 'base64');
+                        coverImages.push({ mangaId, file: f, data: b64 });
+                    } catch (e) { }
+                }
+                // Also check per-version managed dirs
+                const versionsDir = path.join(managedDir, 'versions');
+                if (fs.existsSync(versionsDir)) {
+                    const vDirs = fs.readdirSync(versionsDir);
+                    for (const vId of vDirs) {
+                        const vDir = path.join(versionsDir, vId);
+                        if (!fs.statSync(vDir).isDirectory()) continue;
+                        const vFiles = fs.readdirSync(vDir);
+                        for (const f of vFiles) {
+                            if (!COVER_FILE_RE.test(f)) continue;
+                            try {
+                                const fp = path.join(vDir, f);
+                                if (!fs.statSync(fp).isFile()) continue;
+                                const b64 = fs.readFileSync(fp, 'base64');
+                                coverImages.push({ mangaId, versionId: vId, file: f, data: b64 });
+                            } catch (e) { }
+                        }
+                    }
+                }
+            } catch (e) { }
+        }
+
+        const encrypted = encryptData({ meta, categories, bookmarks, bookmarkImages, coverImages }, password);
 
         res.setHeader('Content-Type', 'application/octet-stream');
         res.setHeader('Content-Disposition', `attachment; filename="kodo_backup_${Date.now()}.kdba"`);
@@ -1947,6 +2121,31 @@ app.post('/api/backup/import', backupUpload, (req, res) => {
             saveMeta(decryptedMeta.meta);
             if (decryptedMeta.categories) saveCategories(decryptedMeta.categories);
             if (decryptedMeta.bookmarks && Array.isArray(decryptedMeta.bookmarks)) saveBookmarks(decryptedMeta.bookmarks);
+            // Restore bookmark screenshot images
+            if (decryptedMeta.bookmarkImages && Array.isArray(decryptedMeta.bookmarkImages)) {
+                for (const img of decryptedMeta.bookmarkImages) {
+                    try {
+                        const sDir = path.join(BOOKMARK_DIR, img.series);
+                        fs.ensureDirSync(sDir);
+                        fs.writeFileSync(path.join(sDir, img.file), Buffer.from(img.data, 'base64'));
+                    } catch (e) { }
+                }
+            }
+            // Restore managed cover images
+            if (decryptedMeta.coverImages && Array.isArray(decryptedMeta.coverImages)) {
+                for (const cover of decryptedMeta.coverImages) {
+                    try {
+                        let destDir;
+                        if (cover.versionId) {
+                            destDir = path.join(MANGA_PATH, cover.mangaId, 'versions', cover.versionId);
+                        } else {
+                            destDir = path.join(MANGA_PATH, cover.mangaId);
+                        }
+                        fs.ensureDirSync(destDir);
+                        fs.writeFileSync(path.join(destDir, cover.file), Buffer.from(cover.data, 'base64'));
+                    } catch (e) { }
+                }
+            }
         } else {
             saveMeta(decryptedMeta); // legacy backup format
         }
@@ -1963,7 +2162,6 @@ const archiver = require('archiver');
 const unzipper = require('unzipper');
 const crypto = require('crypto');
 const backupJobs = {};
-const COVER_FILE_RE = /^cover\.(jpg|jpeg|png|webp|avif)$/i;
 
 const isSubPath = (parentDir, targetDir) => {
     if (!parentDir || !targetDir) return false;
@@ -2441,12 +2639,26 @@ app.post('/api/cache/clear-kodo', (req, res) => {
         const PAGE_CACHE = path.join(APP_ROOT, 'data', 'page-cache');
         const CBZ_CACHE = path.join(APP_ROOT, 'data', 'cbz-cache');
 
+        // Only clear page-rendering and CBZ extraction caches.
+        // Bookmarks and user data are NEVER touched here.
         if (fs.existsSync(PAGE_CACHE)) fs.emptyDirSync(PAGE_CACHE);
         if (fs.existsSync(CBZ_CACHE)) fs.emptyDirSync(CBZ_CACHE);
 
-        saveBookmarks([]);
-        if (fs.existsSync(BOOKMARK_DIR)) fs.emptyDirSync(BOOKMARK_DIR);
+        // Also invalidate the in-memory library cache so the next request rebuilds it.
+        _libraryCache = null;
+        _libraryCacheBuilding = false;
 
+        res.json({ ok: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Refresh-only endpoint: invalidates library cache and triggers background rescan.
+// No files are deleted — bookmarks and all user data are left completely untouched.
+app.post('/api/cache/refresh-library', (req, res) => {
+    try {
+        _libraryCache = null;
+        _libraryCacheBuilding = false;
+        ensureLibraryCacheWarmup();
         res.json({ ok: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -2729,7 +2941,20 @@ app.listen(PORT, '127.0.0.1', () => {
     console.log(`Kodo server → http://127.0.0.1:${PORT}`);
     console.log(`Manga folder: ${MANGA_PATH}`);
 
-    // Pre-build the library cache in the background so the first /api/manga is instant
-    ensureLibraryCacheWarmup();
+    // Pre-populate the cache instantly from meta.json so the very first /api/manga
+    // request returns data immediately (no warming delay for the user).
+    // The full filesystem scan runs in the background and silently updates the cache.
+    _libraryCache = buildFastLibraryList();
+
+    // Full background scan: updates chapter counts, covers, and persists to meta.json
+    // so future cold starts remain instant.
+    refreshLibraryCache()
+        .then(() => {
+            if (_libraryCache) persistLibraryCacheToMeta(_libraryCache);
+        })
+        .catch((err) => {
+            console.error('Library warmup failed:', err?.message || err);
+        });
+
     scheduleBookmarkCleanup();
 });

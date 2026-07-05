@@ -900,6 +900,8 @@ a {
 }
 
 .manga-card {
+  --card-image-scale: 1.01;
+  --card-image-hover-scale: 1.05;
   position: relative;
   border-radius: var(--radius);
   overflow: hidden;
@@ -941,30 +943,73 @@ a {
   inset: 0;
   overflow: hidden;
   border-radius: inherit;
+  background: var(--surface);
+  line-height: 0;
+  isolation: isolate;
+  contain: paint;
   z-index: 0;
 }
 
-.manga-card-img img {
+.manga-card-img img,
+.bookmark-card-thumb-img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  transform: translate3d(0, 0, 0) scale(var(--card-image-scale, 1.01));
+  transform-origin: center center;
+  backface-visibility: hidden;
   transition: transform 0.5s cubic-bezier(.4, 0, .2, 1);
 }
 
 .manga-card-img img.fix-jagged {
   image-rendering: auto;
+}
+
+.manga-card:hover .manga-card-img img {
+  transform: translate3d(0, 0, 0) scale(var(--card-image-hover-scale, 1.05));
+  will-change: transform;
+}
+
+.manga-card:hover .manga-card-img img.fix-jagged {
+  transform: translate3d(0, 0, 0) scale(var(--card-image-hover-scale, 1.05));
+}
+
+.bookmark-card {
+  --card-image-scale: 1.01;
   transform: translateZ(0);
+}
+
+.bookmark-card-thumb {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface);
+  line-height: 0;
+  isolation: isolate;
+  contain: paint;
+}
+
+.bookmarks-page .manga-card-img img,
+.bookmarks-page .bookmark-card-thumb-img {
+  inset: -1px;
+  width: calc(100% + 2px);
+  height: calc(100% + 2px);
+  transform: translate3d(0, 0, 0) scale(1) !important;
+  transition: transform 0.22s cubic-bezier(.4, 0, .2, 1) !important;
   will-change: transform;
   backface-visibility: hidden;
 }
 
-.manga-card:hover .manga-card-img img {
-  transform: scale(1.05);
+.bookmarks-page .manga-card:hover .manga-card-img img,
+.bookmarks-page .manga-card:hover .manga-card-img img.fix-jagged,
+.bookmarks-page .bookmark-card:hover .bookmark-card-thumb-img {
+  transform: translate3d(0, 0, 0) scale(1.03) !important;
 }
 
-.manga-card:hover .manga-card-img img.fix-jagged {
-  transform: scale(1.05) translateZ(0);
+.bookmarks-page .bookmark-card {
+  transform: none !important;
 }
 
 /* Chapter badge — fully isolated, never zooms */

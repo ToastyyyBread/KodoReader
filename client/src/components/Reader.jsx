@@ -44,9 +44,33 @@ export const deleteBookmarkAsync = async (API, id) => {
     } catch { }
 };
 
-// Capture a thumbnail from an <img> element via canvas
-const captureThumbnail = (imgEl, readMode, viewportCenterY) => {
+const waitForNextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
+
+const waitForLayoutStability = async (containerEl) => {
+    // Let pending layout + paint complete first.
+    await waitForNextFrame();
+    await waitForNextFrame();
+
+    if (!containerEl) return;
+
+    let prevScrollTop = containerEl.scrollTop;
+    let stableFrames = 0;
+
+    // Wait until scroll settles for at least 2 frames (or bail quickly).
+    for (let i = 0; i < 8 && stableFrames < 2; i++) {
+        await waitForNextFrame();
+        const currentScrollTop = containerEl.scrollTop;
+        if (Math.abs(currentScrollTop - prevScrollTop) < 0.5) stableFrames += 1;
+        else stableFrames = 0;
+        prevScrollTop = currentScrollTop;
+    }
+};
+
+// Capture a thumbnail from the rendered reader viewport via canvas.
+const captureThumbnail = (containerEl, imageElements) => {
     try {
+        if (!containerEl) return null;
+
         let settingStr = localStorage.getItem('kodo-bookmark-quality');
         let qualitySetting = settingStr ? parseInt(settingStr) : 35;
         if (qualitySetting < 35) qualitySetting = 35; // enforce min 35%
@@ -55,45 +79,117 @@ const captureThumbnail = (imgEl, readMode, viewportCenterY) => {
         const bmCropH = parseInt(localStorage.getItem('kodo-bm-crop-h')) || 110;
         const bmCropY = parseInt(localStorage.getItem('kodo-bm-crop-y')) || 0;
 
-        let sx = 0, sy = 0, sw = imgEl.naturalWidth, sh = imgEl.naturalHeight;
+        const containerRect = containerEl.getBoundingClientRect();
+        if (containerRect.width <= 0 || containerRect.height <= 0) return null;
 
-        if (readMode === 'Vertical' || readMode === 'Double' || readMode === 'Single') {
+        // Build visible rendered-image bounds by intersecting each image rect with the viewport.
+        const visibleSegments = [];
+        imageElements.forEach((imgEl) => {
+            if (!imgEl || !imgEl.isConnected || !imgEl.complete || !imgEl.naturalWidth || !imgEl.naturalHeight) return;
+
             const rect = imgEl.getBoundingClientRect();
-            // Use the provided viewport center Y, falling back to window center
-            const screenCenterY = viewportCenterY != null ? viewportCenterY : (window.innerHeight / 2);
-            let relativeY = screenCenterY - rect.top;
+            if (rect.width <= 0 || rect.height <= 0) return;
 
-            // Clamp to image bounds
-            if (relativeY < 0) relativeY = 0;
-            if (relativeY > rect.height) relativeY = rect.height;
+            const visibleLeft = Math.max(rect.left, containerRect.left);
+            const visibleTop = Math.max(rect.top, containerRect.top);
+            const visibleRight = Math.min(rect.right, containerRect.right);
+            const visibleBottom = Math.min(rect.bottom, containerRect.bottom);
 
-            const nativeCenterY = (relativeY / rect.height) * imgEl.naturalHeight;
-            const nativeCenterX = imgEl.naturalWidth / 2;
+            if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) return;
 
-            sw = (bmCropW / 100) * imgEl.naturalWidth;
-            sh = (bmCropH / 100) * imgEl.naturalWidth;
-            const offsetY = (bmCropY / 100) * imgEl.naturalWidth;
+            visibleSegments.push({
+                imgEl,
+                rect,
+                visibleLeft,
+                visibleTop,
+                visibleRight,
+                visibleBottom
+            });
+        });
+        if (visibleSegments.length === 0) return null;
 
-            sx = nativeCenterX - (sw / 2);
-            sy = nativeCenterY + offsetY - (sh / 2);
+        const imageBounds = visibleSegments.reduce((acc, seg) => ({
+            left: Math.min(acc.left, seg.visibleLeft),
+            top: Math.min(acc.top, seg.visibleTop),
+            right: Math.max(acc.right, seg.visibleRight),
+            bottom: Math.max(acc.bottom, seg.visibleBottom)
+        }), {
+            left: Number.POSITIVE_INFINITY,
+            top: Number.POSITIVE_INFINITY,
+            right: Number.NEGATIVE_INFINITY,
+            bottom: Number.NEGATIVE_INFINITY
+        });
 
-            if (sx < 0) sx = 0;
-            if (sy < 0) sy = 0;
-            if (sx + sw > imgEl.naturalWidth) sw = imgEl.naturalWidth - sx;
-            if (sy + sh > imgEl.naturalHeight) sh = imgEl.naturalHeight - sy;
-        }
+        const imageBoundsW = imageBounds.right - imageBounds.left;
+        const imageBoundsH = imageBounds.bottom - imageBounds.top;
+        if (imageBoundsW <= 0 || imageBoundsH <= 0) return null;
 
-        const maxFhdWidth = Math.min(sw, 1080);
+        // Apply crop controls inside the visible image bounds (prevents black side margins).
+        const visualCropW = Math.min(imageBoundsW, imageBoundsW * (bmCropW / 100));
+        const visualCropH = Math.min(imageBoundsH, imageBoundsW * (bmCropH / 100));
+        const visualOffsetY = imageBoundsW * (bmCropY / 100);
+
+        const centerX = imageBounds.left + (imageBoundsW / 2);
+        const centerY = imageBounds.top + (imageBoundsH / 2) + visualOffsetY;
+
+        const captureLeft = Math.min(
+            Math.max(centerX - (visualCropW / 2), imageBounds.left),
+            imageBounds.right - visualCropW
+        );
+        const captureTop = Math.min(
+            Math.max(centerY - (visualCropH / 2), imageBounds.top),
+            imageBounds.bottom - visualCropH
+        );
+        const captureRight = captureLeft + visualCropW;
+        const captureBottom = captureTop + visualCropH;
+
+        const maxFhdWidth = Math.min(visualCropW, 1080);
         let targetW = maxFhdWidth * (qualitySetting / 100);
         if (targetW < 200) targetW = 200;
 
-        const ratio = sh / sw;
+        const ratio = visualCropH / visualCropW;
         const canvas = document.createElement('canvas');
-        canvas.width = targetW;
+        canvas.width = Math.round(targetW);
         canvas.height = Math.round(targetW * ratio);
 
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+        if (!ctx) return null;
+
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const dstScaleX = canvas.width / visualCropW;
+        const dstScaleY = canvas.height / visualCropH;
+        let painted = false;
+
+        visibleSegments.forEach(({ imgEl, rect }) => {
+            const interLeft = Math.max(captureLeft, rect.left);
+            const interTop = Math.max(captureTop, rect.top);
+            const interRight = Math.min(captureRight, rect.right);
+            const interBottom = Math.min(captureBottom, rect.bottom);
+
+            if (interRight <= interLeft || interBottom <= interTop) return;
+
+            const sourceScaleX = imgEl.naturalWidth / rect.width;
+            const sourceScaleY = imgEl.naturalHeight / rect.height;
+
+            const sx = (interLeft - rect.left) * sourceScaleX;
+            const sy = (interTop - rect.top) * sourceScaleY;
+            const sw = (interRight - interLeft) * sourceScaleX;
+            const sh = (interBottom - interTop) * sourceScaleY;
+
+            // Round destination coords to integers and add 1px overlap to
+            // eliminate sub-pixel seams between adjacent image segments.
+            const dx = Math.floor((interLeft - captureLeft) * dstScaleX);
+            const dy = Math.floor((interTop - captureTop) * dstScaleY);
+            const dw = Math.ceil((interRight - interLeft) * dstScaleX) + 1;
+            const dh = Math.ceil((interBottom - interTop) * dstScaleY) + 1;
+
+            ctx.drawImage(imgEl, sx, sy, sw, sh, dx, dy, dw, dh);
+            painted = true;
+        });
+
+        if (!painted) return null;
 
         const encodeQ = 0.6 + ((qualitySetting / 100) * 0.3);
         return canvas.toDataURL('image/jpeg', encodeQ);
@@ -271,7 +367,7 @@ const ReaderToolbar = ({
     fitMode, onFitModeChange,
     zoom, onZoomChange,
     currentPage, totalPages, onPageChange,
-    onBookmark,
+    onBookmark, isBookmarking,
     onDropdownToggle,
     // settings
     optimizeImages, onOptimizeImages,
@@ -431,8 +527,8 @@ const ReaderToolbar = ({
 
             <div className="toolbar-divider" />
 
-            <button className="toolbar-btn" title="Bookmark this page" onClick={onBookmark}>
-                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+            <button className="toolbar-btn" title="Bookmark this page" onClick={onBookmark} style={{ opacity: isBookmarking ? 0.7 : 1, transition: 'all 0.2s', pointerEvents: isBookmarking ? 'none' : 'auto' }} disabled={isBookmarking}>
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke={isBookmarking ? "var(--accent)" : "currentColor"} strokeWidth="2" style={{ transform: isBookmarking ? 'scale(1.2)' : 'scale(1)', transition: 'all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)' }}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
                 </svg>
             </button>
@@ -821,10 +917,16 @@ const Reader = ({ mangaId, chapterId, versionId = 'default', mangaTitle, chapter
     // ── Bookmark handler ─────────────────────────────────────
     const [bookmarkToast, setBookmarkToast] = useState(null);
     const bookmarkToastTimer = useRef(null);
-    const lastBookmarkRef = useRef(null);
+    const [isBookmarking, setIsBookmarking] = useState(false);
 
-    const handleBookmark = () => {
+    const handleBookmark = async () => {
+        if (isBookmarking) return;
+        setIsBookmarking(true);
+        setTimeout(() => setIsBookmarking(false), 500);
+
         const container = scrollRef.current;
+        await waitForLayoutStability(container);
+
         // Determine viewport center in screen coordinates
         const containerRect = container ? container.getBoundingClientRect() : null;
         const viewportCenterY = containerRect
@@ -837,11 +939,11 @@ const Reader = ({ mangaId, chapterId, versionId = 'default', mangaTitle, chapter
             let bestIdx = 0;
             let bestOverlap = -Infinity;
             imgRefs.current.forEach((el, i) => {
-                if (!el) return;
+                if (!el || !el.isConnected) return;
                 const rect = el.getBoundingClientRect();
                 // Check if this image covers the viewport center
                 if (rect.top <= viewportCenterY && rect.bottom >= viewportCenterY) {
-                    // Direct hit — this image is at the viewport center
+                    // Direct hit - this image is at the viewport center
                     bestIdx = i;
                     bestOverlap = Infinity;
                 } else if (bestOverlap < Infinity) {
@@ -856,22 +958,10 @@ const Reader = ({ mangaId, chapterId, versionId = 'default', mangaTitle, chapter
             pageIdx = bestIdx;
         }
 
-        const currentScrollY = container ? container.scrollTop : 0;
-
-        // Spam protection (prevent creating bookmark at exact same page and scroll position)
-        if (lastBookmarkRef.current && lastBookmarkRef.current.pageIdx === pageIdx && lastBookmarkRef.current.chapterId === chapterId) {
-            if (Math.abs(lastBookmarkRef.current.scrollY - currentScrollY) < (window.innerHeight * 0.3)) {
-                // Ignore if the bookmark toast is still showing to prevent spamming
-                if (bookmarkToast && bookmarkToast.show && !bookmarkToast.leaving) return;
-                // Or simply return early entirely so we don't save duplicate images
-                if (Math.abs(lastBookmarkRef.current.scrollY - currentScrollY) < 50) return;
-            }
-        }
-
-        lastBookmarkRef.current = { pageIdx, chapterId, scrollY: currentScrollY };
-
-        const imgEl = imgRefs.current[pageIdx];
-        const thumbnailBase64 = imgEl ? captureThumbnail(imgEl, readMode, viewportCenterY) : null;
+        const renderedImages = imgRefs.current.filter(el => el && el.isConnected);
+        const thumbnailBase64 = renderedImages.length > 0
+            ? captureThumbnail(container, renderedImages)
+            : null;
 
         const bookmarkId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
@@ -905,6 +995,92 @@ const Reader = ({ mangaId, chapterId, versionId = 'default', mangaTitle, chapter
     };
 
     // ── Resume info label ────────────────────────────────────
+    // ── Keyboard Navigation ──────────────────────────────────
+    const latestCallbacks = useRef({ handleChapterChange, handleBookmark, onBack, currentChapterIdx });
+    latestCallbacks.current = { handleChapterChange, handleBookmark, onBack, currentChapterIdx };
+
+    useEffect(() => {
+        let lastChapterNav = 0;
+        const handleKeyDown = (e) => {
+            const target = e.target;
+            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+            if (document.querySelector('.modal') || document.querySelector('[role="dialog"]')) return;
+
+            const { handleChapterChange, handleBookmark, onBack, currentChapterIdx } = latestCallbacks.current;
+            const scrollEl = scrollRef.current;
+            const scrollAmount = 80;
+            const viewportHeight = window.innerHeight * 0.85;
+
+            switch (e.key) {
+                case 'Escape':
+                    e.preventDefault();
+                    onBack(null);
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    if (scrollEl) scrollEl.scrollBy({ top: -scrollAmount, behavior: 'smooth' });
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    if (scrollEl) scrollEl.scrollBy({ top: scrollAmount, behavior: 'smooth' });
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    if (Date.now() - lastChapterNav > 500) {
+                        lastChapterNav = Date.now();
+                        handleChapterChange(currentChapterIdx - 1);
+                    }
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    if (Date.now() - lastChapterNav > 500) {
+                        lastChapterNav = Date.now();
+                        handleChapterChange(currentChapterIdx + 1);
+                    }
+                    break;
+                case ' ':
+                    e.preventDefault();
+                    if (scrollEl) {
+                        if (e.shiftKey) {
+                            scrollEl.scrollBy({ top: -viewportHeight, behavior: 'smooth' });
+                        } else {
+                            scrollEl.scrollBy({ top: viewportHeight, behavior: 'smooth' });
+                        }
+                    }
+                    break;
+                case 'b':
+                case 'B':
+                    if (e.ctrlKey || e.altKey || e.metaKey) return;
+                    e.preventDefault();
+                    handleBookmark();
+                    break;
+                case 'f':
+                case 'F':
+                    if (e.ctrlKey || e.altKey || e.metaKey) return;
+                    e.preventDefault();
+                    if (!document.fullscreenElement) {
+                        document.documentElement.requestFullscreen().catch(() => { });
+                    } else {
+                        document.exitFullscreen().catch(() => { });
+                    }
+                    break;
+                case 'Home':
+                    e.preventDefault();
+                    if (scrollEl) scrollEl.scrollTo({ top: 0, behavior: 'smooth' });
+                    break;
+                case 'End':
+                    e.preventDefault();
+                    if (scrollEl) scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: 'smooth' });
+                    break;
+                default:
+                    break;
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
+
     const resumeLabel = savedProg ? 'You were here before' : null;
 
     return (
@@ -1062,6 +1238,7 @@ const Reader = ({ mangaId, chapterId, versionId = 'default', mangaTitle, chapter
                 }}
                 style={{
                     flex: 1,
+                    position: 'relative',
                     overflowY: 'auto',
                     overflowX: 'auto',
                     display: 'flex',
@@ -1133,6 +1310,7 @@ const Reader = ({ mangaId, chapterId, versionId = 'default', mangaTitle, chapter
                                 src={`${API}${images[currentPage + 1]}`}
                                 alt={`Page ${currentPage + 2}`}
                                 crossOrigin="anonymous"
+                                ref={el => (imgRefs.current[currentPage + 1] = el)}
                                 style={{ ...fitStyleSingleDouble, maxWidth: fitMode === 'Original' ? '50%' : 'none', objectFit: 'contain', ...imgOptStyle }}
                             />
                         )}
@@ -1286,6 +1464,7 @@ const Reader = ({ mangaId, chapterId, versionId = 'default', mangaTitle, chapter
                     totalPages={totalPages}
                     onPageChange={handlePageChange}
                     onBookmark={handleBookmark}
+                    isBookmarking={isBookmarking}
                     onDropdownToggle={handleDropdownToggle}
                     optimizeImages={optimizeImages}
                     onOptimizeImages={handleOptimizeImages}
@@ -1306,3 +1485,4 @@ const Reader = ({ mangaId, chapterId, versionId = 'default', mangaTitle, chapter
 };
 
 export default Reader;
+

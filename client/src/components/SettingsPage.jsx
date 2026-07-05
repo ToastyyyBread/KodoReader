@@ -137,6 +137,10 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
     const [backupRunning, setBackupRunning] = useState(false);
     const backupIntervalRef = useRef(null);
 
+    // Bookmark export ZIP state
+    const [bmExporting, setBmExporting] = useState(false);
+    const [bmExportMsg, setBmExportMsg] = useState('');
+
     // GDrive state
     const [gdriveConnected, setGdriveConnected] = useState(false);
     const [gdriveClientId, setGdriveClientId] = useState('');
@@ -149,6 +153,8 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
     const [showDeleteTempModal, setShowDeleteTempModal] = useState(false);
     const [showDeleteKodoModal, setShowDeleteKodoModal] = useState(false);
     const [showDeleteMetadataModal, setShowDeleteMetadataModal] = useState(false);
+    const [refreshingLibrary, setRefreshingLibrary] = useState(false);
+    const [refreshLibraryMsg, setRefreshLibraryMsg] = useState('');
 
     // Tab Bar state and logic
     const tabsRef = useRef(null);
@@ -393,6 +399,22 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
         }
     };
 
+    const handleRefreshLibrary = async () => {
+        if (refreshingLibrary) return;
+        setRefreshingLibrary(true);
+        setRefreshLibraryMsg('Refreshing library...');
+        try {
+            await fetch('/api/cache/refresh-library', { method: 'POST' });
+            setRefreshLibraryMsg('Library refreshed! – Bookmarks untouched.');
+            setTimeout(() => setRefreshLibraryMsg(''), 4000);
+        } catch {
+            setRefreshLibraryMsg('Refresh failed.');
+            setTimeout(() => setRefreshLibraryMsg(''), 4000);
+        } finally {
+            setRefreshingLibrary(false);
+        }
+    };
+
     const handleRestoreClick = () => {
         const input = document.createElement('input');
         input.type = 'file';
@@ -405,6 +427,33 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
             }
         };
         input.click();
+    };
+
+    const handleBookmarkExportZip = async () => {
+        if (bmExporting) return;
+        setBmExporting(true);
+        setBmExportMsg('Generating ZIP...');
+        try {
+            const res = await fetch('/api/bookmark/export-zip', { method: 'POST' });
+            if (!res.ok) throw new Error(await res.text());
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const timestamp = new Date().toISOString().slice(0, 10);
+            a.download = `bookmarks-backup-${timestamp}.zip`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+            setBmExportMsg('Bookmarks exported successfully!');
+            setTimeout(() => setBmExportMsg(''), 4000);
+        } catch (err) {
+            setBmExportMsg('Export failed: ' + err.message);
+            setTimeout(() => setBmExportMsg(''), 5000);
+        } finally {
+            setBmExporting(false);
+        }
     };
 
     const handleGDriveConnectSubmit = async () => {
@@ -774,15 +823,16 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                         <div className="settings-card">
                             <div className="settings-row" style={{ paddingBottom: 12, borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
                                 <div style={{ flex: 1 }}>
-                                    <div className="settings-label">Clear Processing & Kōdo Caches</div>
+                                    <div className="settings-label">Clear Processing &amp; Kōdo Caches</div>
                                     <div className="settings-desc">Deletes residual Upscaler files and extracted CBZ pages from memory to free up disk space.</div>
                                 </div>
                                 <div style={{ display: 'flex', gap: 10 }}>
                                     <button onClick={() => setShowDeleteTempModal(true)} style={{ padding: '8px 14px', borderRadius: 8, background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text)', cursor: 'pointer', fontWeight: 600, fontSize: 12.5, transition: 'background 0.15s' }} onMouseEnter={e => e.currentTarget.style.background = 'var(--surface)'} onMouseLeave={e => e.currentTarget.style.background = 'var(--surface2)'}>Clear Temp</button>
 
-                                    <button onClick={() => setShowDeleteKodoModal(true)} style={{ padding: '8px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', cursor: 'pointer', fontWeight: 600, fontSize: 12.5, transition: 'background 0.15s' }} onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.15)'} onMouseLeave={e => e.currentTarget.style.background = 'rgba(239,68,68,0.1)'}>Clear Kōdo</button>
+                                    <button onClick={() => setShowDeleteKodoModal(true)} style={{ padding: '8px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', cursor: 'pointer', fontWeight: 600, fontSize: 12.5, transition: 'background 0.15s' }} onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.15)'} onMouseLeave={e => e.currentTarget.style.background = 'rgba(239,68,68,0.1)'}>Clear Page Cache</button>
                                 </div>
                             </div>
+
                             <div className="settings-row" style={{ paddingTop: 16, borderBottom: '1px solid var(--border)', paddingBottom: 16 }}>
                                 <div style={{ flex: 1 }}>
                                     <div className="settings-label" style={{ color: '#ef4444' }}>Clear Library Metadata</div>
@@ -819,6 +869,62 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                 {/* ── BOOKMARKS ─────────────────────────────────── */}
                 {activeSection === 'bookmarks' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+                        {/* Bookmark ZIP Export card */}
+                        <div className="settings-card">
+                            <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+                                <div style={{ flex: 1 }}>
+                                    <div className="settings-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                        Export Bookmarks
+                                    </div>
+                                    <div className="settings-desc">
+                                        Download all bookmarks as a ZIP archive — includes <code style={{ fontSize: 11, background: 'var(--surface2)', padding: '1px 5px', borderRadius: 4 }}>bookmarks.json</code> and the full <code style={{ fontSize: 11, background: 'var(--surface2)', padding: '1px 5px', borderRadius: 4 }}>saved/</code> folder with all thumbnail images.
+                                    </div>
+                                    {bmExportMsg && (
+                                        <div style={{
+                                            marginTop: 10,
+                                            display: 'inline-flex', alignItems: 'center', gap: 6,
+                                            fontSize: 12, fontWeight: 600,
+                                            color: bmExportMsg.toLowerCase().includes('fail') ? '#ef4444' : '#10b981',
+                                            padding: '5px 10px',
+                                            background: bmExportMsg.toLowerCase().includes('fail') ? 'rgba(239,68,68,0.08)' : 'rgba(16,185,129,0.08)',
+                                            border: `1px solid ${bmExportMsg.toLowerCase().includes('fail') ? 'rgba(239,68,68,0.2)' : 'rgba(16,185,129,0.2)'}`,
+                                            borderRadius: 8,
+                                        }}>
+                                            {bmExportMsg.toLowerCase().includes('fail')
+                                                ? <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M15 9l-6 6M9 9l6 6" /></svg>
+                                                : <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M20 6L9 17l-5-5" /></svg>
+                                            }
+                                            {bmExportMsg}
+                                        </div>
+                                    )}
+                                </div>
+                                <button
+                                    onClick={handleBookmarkExportZip}
+                                    disabled={bmExporting}
+                                    style={{
+                                        padding: '8px 14px', borderRadius: 8, flexShrink: 0,
+                                        background: bmExporting ? 'var(--surface2)' : 'var(--surface2)',
+                                        border: '1px solid var(--border)',
+                                        color: bmExporting ? 'var(--muted)' : 'var(--text)',
+                                        fontWeight: 600, fontSize: 12.5,
+                                        cursor: bmExporting ? 'not-allowed' : 'pointer',
+                                        display: 'flex', alignItems: 'center', gap: 6,
+                                        opacity: bmExporting ? 0.6 : 1,
+                                        transition: 'background 0.15s', fontFamily: 'inherit',
+                                    }}
+                                    onMouseEnter={e => { if (!bmExporting) e.currentTarget.style.background = 'var(--surface)'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface2)'; }}
+                                >
+                                    {bmExporting
+                                        ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: 'spin 1s linear infinite' }}><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" /></svg>
+                                        : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" /></svg>
+                                    }
+                                    {bmExporting ? 'Exporting...' : 'Export .zip'}
+                                </button>
+                            </div>
+                        </div>
+
                         <div className="settings-card">
                             <div className="settings-row" style={{ paddingBottom: 16, borderBottom: '1px solid var(--border)' }}>
                                 <div>
@@ -1415,17 +1521,17 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                 )}
 
 
+
                 {/* ── BACKUP & SYNC ──────────────────────────────────── */}
                 {activeSection === 'backup' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-
 
                         {/* What Gets Backed Up + Include Files Toggle */}
                         <div className="settings-card">
                             <div className="settings-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
                                 <div className="settings-label" style={{ fontSize: 13 }}>What's included in backups?</div>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                    {['Metadata', 'Read Progress', 'Series Editions', 'Bookmarks', 'NSFW Flags', 'Cover', 'Categories', ...(includeFiles ? ['Manga Files (CBZ)'] : [])].map(item => (
+                                    {['Metadata', 'Read Progress', 'Series Editions', 'Bookmarks', 'Bookmark Screenshots', 'Cover Images', 'NSFW Flags', 'Categories', ...(includeFiles ? ['Manga Files (CBZ)'] : [])].map(item => (
                                         <span key={item} style={{
                                             fontSize: 11, padding: '3px 10px', borderRadius: 20,
                                             background: item === 'Manga Files (CBZ)' ? 'rgba(245,158,11,0.12)' : 'rgba(99,102,241,0.1)',
@@ -1491,7 +1597,8 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                             </div>
                         </div>
 
-                        {/* Google Drive Card */}
+                        {/* Google Drive Card — Hidden (full GDrive integration still WIP) */}
+                        {false && (
                         <div className="settings-card">
                             <div style={{ padding: '16px 20px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
@@ -1519,7 +1626,7 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                                                 <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, background: 'rgba(16,185,129,0.12)', color: '#10b981', fontWeight: 700, border: '1px solid rgba(16,185,129,0.2)' }}>Connected</span>
                                             )}
                                         </div>
-                                        <div className="settings-desc">Sync series & metadata backups to your Personal Google Drive cloud storage</div>
+                                        <div className="settings-desc">Sync series &amp; metadata backups to your Personal Google Drive cloud storage</div>
                                     </div>
                                 </div>
 
@@ -1538,11 +1645,11 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                                                 </div>
                                                 <div style={{ display: 'flex', gap: 8 }}>
                                                     <span style={{ minWidth: 20, height: 20, borderRadius: '50%', background: 'rgba(66,133,244,0.15)', color: '#4285f4', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>3</span>
-                                                    <span>Go to <b>APIs & Services</b> → Enable <b>Google Drive API</b></span>
+                                                    <span>Go to <b>APIs &amp; Services</b> &#8594; Enable <b>Google Drive API</b></span>
                                                 </div>
                                                 <div style={{ display: 'flex', gap: 8 }}>
                                                     <span style={{ minWidth: 20, height: 20, borderRadius: '50%', background: 'rgba(66,133,244,0.15)', color: '#4285f4', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>4</span>
-                                                    <span>Go to <b>Credentials</b> → Create <b>OAuth Client ID</b> (Web Application)</span>
+                                                    <span>Go to <b>Credentials</b> &#8594; Create <b>OAuth Client ID</b> (Web Application)</span>
                                                 </div>
                                                 <div style={{ display: 'flex', gap: 8 }}>
                                                     <span style={{ minWidth: 20, height: 20, borderRadius: '50%', background: 'rgba(66,133,244,0.15)', color: '#4285f4', fontWeight: 700, fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>5</span>
@@ -1609,6 +1716,7 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                                 )}
                             </div>
                         </div>
+                        )}
                     </div>
                 )}
 
@@ -1978,7 +2086,7 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                 </div>
             )}
 
-            {/* Custom Modal for Clear Kodo */}
+            {/* Custom Modal for Clear Kodo (now: Clear Page Cache) */}
             {showDeleteKodoModal && (
                 <div style={{
                     position: 'fixed', inset: 0, zIndex: 99999,
@@ -2000,13 +2108,13 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                                 <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                             </div>
                             <div>
-                                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>Clear Kōdo Caches</h3>
-                                <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>This will delete page caches and bookmarks.</div>
+                                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>Clear Page Cache</h3>
+                                <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>Frees disk space used by rendering caches.</div>
                             </div>
                         </div>
 
                         <div style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.5, marginBottom: 24, padding: '12px 16px', background: 'var(--surface2)', borderRadius: 12, border: '1px solid var(--border)' }}>
-                            Are you sure you want to clear all Kōdo caches? This will delete all cached pages and also delete all of your saved bookmarks and bookmark screenshots.
+                            This will clear all cached pages and extracted CBZ images to free up disk space. <strong>Bookmarks and all your data are not affected.</strong>
                         </div>
 
                         <div style={{ display: 'flex', gap: 12 }}>
@@ -2039,7 +2147,7 @@ const SettingsPage = ({ theme, onToggleTheme, activeSectionProp, modal }) => {
                                 onMouseEnter={e => e.currentTarget.style.background = '#dc2626'}
                                 onMouseLeave={e => e.currentTarget.style.background = '#ef4444'}
                             >
-                                Clear Kōdo
+                                Clear Cache
                             </button>
                         </div>
                     </div>

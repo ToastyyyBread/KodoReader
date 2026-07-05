@@ -1,4 +1,4 @@
-﻿const path = require('path');
+const path = require('path');
 const fs = require('fs-extra');
 const { spawn } = require('child_process');
 const { Readable } = require('stream');
@@ -1932,10 +1932,65 @@ const runUpscalerBatch = async (inputDir, outputDir, model, scale, denoiseLevel,
             clearInterval(pollInterval);
         }
 
-        const finalCount = fs.readdirSync(outputDir).filter(f => IMAGE_EXT.test(f)).length;
+        const finalCount = fs.existsSync(outputDir)
+            ? fs.readdirSync(outputDir).filter(f => IMAGE_EXT.test(f)).length
+            : 0;
         job.progress.pagesCurrent = finalCount;
         job.progress.stagePercent = 100;
         persistQueue();
+
+        // ── Validate: detect missing or corrupt waifu2x outputs, re-upscale individually ──
+        const minValidBytesRaw = Number(process.env.KODO_UPSCALER_MIN_VALID_BYTES || 2048);
+        const MIN_VALID_SIZE = Number.isFinite(minValidBytesRaw) && minValidBytesRaw > 0 ? minValidBytesRaw : 2048;
+
+        const w2xOutputFiles = fs.existsSync(outputDir)
+            ? fs.readdirSync(outputDir).filter(f => IMAGE_EXT.test(f))
+            : [];
+        const w2xOutputStemMap = new Map();
+        for (const f of w2xOutputFiles) {
+            w2xOutputStemMap.set(path.parse(f).name.toLowerCase(), path.join(outputDir, f));
+        }
+
+        for (const inputFile of inputImages) {
+            if (job?.status === 'cancelled' || currentJob?.status === 'cancelled') return;
+
+            const inputStem = path.parse(inputFile).name.toLowerCase();
+            const existingOutput = w2xOutputStemMap.get(inputStem);
+            const inputPath = path.join(inputDir, inputFile);
+            const expectedOutPath = path.join(outputDir, path.parse(inputFile).name + '.jpg');
+
+            let needsReupscale = false;
+            if (!existingOutput) {
+                console.warn(`[Upscaler] waifu2x missing output for: ${inputFile} - re-upscaling...`);
+                needsReupscale = true;
+            } else {
+                try {
+                    const stat = fs.statSync(existingOutput);
+                    if (stat.size < MIN_VALID_SIZE) {
+                        console.warn(`[Upscaler] waifu2x tiny/corrupt output (${stat.size}B): ${inputFile} - re-upscaling...`);
+                        fs.removeSync(existingOutput);
+                        w2xOutputStemMap.delete(inputStem);
+                        needsReupscale = true;
+                    }
+                } catch {
+                    needsReupscale = true;
+                }
+            }
+
+            if (needsReupscale && fs.existsSync(inputPath)) {
+                try {
+                    await runUpscalerSingle(inputPath, expectedOutPath, model, scale, denoiseLevel, settings, waifu2xModelDir, job);
+                    console.log(`[Upscaler] waifu2x re-upscaled ${inputFile} successfully.`);
+                    w2xOutputStemMap.set(inputStem, expectedOutPath);
+                } catch (err) {
+                    if (isJobCancelledError(err) || job?.status === 'cancelled' || currentJob?.status === 'cancelled') {
+                        return;
+                    }
+                    console.error(`[Upscaler] waifu2x failed to re-upscale ${inputFile}: ${err.message}`);
+                }
+            }
+        }
+
         return;
     }
 
@@ -2034,37 +2089,65 @@ const runUpscalerBatch = async (inputDir, outputDir, model, scale, denoiseLevel,
         clearInterval(pollInterval);
     }
 
-    // Optional corruption fallback for very tiny files.
-    const minValidBytesRaw = Number(process.env.KODO_UPSCALER_MIN_VALID_BYTES || 1024);
-    const MIN_VALID_SIZE = Number.isFinite(minValidBytesRaw) && minValidBytesRaw > 0 ? minValidBytesRaw : 0;
-    if (MIN_VALID_SIZE > 0) {
-        const outputFiles = fs.readdirSync(outputDir).filter(f => IMAGE_EXT.test(f));
-        for (const f of outputFiles) {
-            const outPath = path.join(outputDir, f);
+    // ── Validate output: detect missing and corrupt (tiny) files, re-upscale individually ──
+    const minValidBytesRaw = Number(process.env.KODO_UPSCALER_MIN_VALID_BYTES || 2048);
+    const MIN_VALID_SIZE = Number.isFinite(minValidBytesRaw) && minValidBytesRaw > 0 ? minValidBytesRaw : 2048;
+
+    // Build a map from stem (filename without extension) -> full output path, for flexible matching.
+    const outputFilesAfterBatch = fs.existsSync(outputDir)
+        ? fs.readdirSync(outputDir).filter(f => IMAGE_EXT.test(f))
+        : [];
+    const outputStemMap = new Map();
+    for (const f of outputFilesAfterBatch) {
+        outputStemMap.set(path.parse(f).name.toLowerCase(), path.join(outputDir, f));
+    }
+
+    for (const inputFile of inputImages) {
+        if (job?.status === 'cancelled' || currentJob?.status === 'cancelled') return;
+
+        const inputStem = path.parse(inputFile).name.toLowerCase();
+        const existingOutput = outputStemMap.get(inputStem);
+        const inputPath = path.join(inputDir, inputFile);
+
+        // Determine expected output path (Real-ESRGAN always outputs jpg)
+        const expectedOutPath = path.join(outputDir, path.parse(inputFile).name + '.jpg');
+
+        let needsReupscale = false;
+        if (!existingOutput) {
+            console.warn(`[Upscaler] Missing output for: ${inputFile} - re-upscaling...`);
+            needsReupscale = true;
+        } else {
             try {
-                const stat = fs.statSync(outPath);
+                const stat = fs.statSync(existingOutput);
                 if (stat.size < MIN_VALID_SIZE) {
-                    console.warn(`[Upscaler] Tiny output detected (${stat.size}B): ${f} - re-upscaling...`);
-                    fs.removeSync(outPath);
-                    const inputPath = path.join(inputDir, f);
-                    if (fs.existsSync(inputPath)) {
-                        try {
-                            await runUpscalerSingle(inputPath, outPath, model, scale, denoiseLevel, settings, waifu2xModelDir, job);
-                            console.log(`[Upscaler] Re-upscaled ${f} successfully.`);
-                        } catch (err) {
-                            if (isJobCancelledError(err) || job?.status === 'cancelled' || currentJob?.status === 'cancelled') {
-                                return;
-                            }
-                            console.error(`[Upscaler] Failed to re-upscale ${f}: ${err.message}`);
-                        }
-                    }
+                    console.warn(`[Upscaler] Tiny/corrupt output (${stat.size}B): ${inputFile} - re-upscaling...`);
+                    fs.removeSync(existingOutput);
+                    outputStemMap.delete(inputStem);
+                    needsReupscale = true;
                 }
-            } catch { }
+            } catch {
+                needsReupscale = true;
+            }
+        }
+
+        if (needsReupscale && fs.existsSync(inputPath)) {
+            try {
+                await runUpscalerSingle(inputPath, expectedOutPath, model, scale, denoiseLevel, settings, waifu2xModelDir, job);
+                console.log(`[Upscaler] Re-upscaled ${inputFile} successfully.`);
+                outputStemMap.set(inputStem, expectedOutPath);
+            } catch (err) {
+                if (isJobCancelledError(err) || job?.status === 'cancelled' || currentJob?.status === 'cancelled') {
+                    return;
+                }
+                console.error(`[Upscaler] Failed to re-upscale ${inputFile}: ${err.message}`);
+            }
         }
     }
 
     // Final progress update
-    const finalCount = fs.readdirSync(outputDir).filter(f => IMAGE_EXT.test(f)).length;
+    const finalCount = fs.existsSync(outputDir)
+        ? fs.readdirSync(outputDir).filter(f => IMAGE_EXT.test(f)).length
+        : 0;
     job.progress.pagesCurrent = finalCount;
     job.progress.stagePercent = 100;
     persistQueue();

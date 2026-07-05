@@ -7,7 +7,7 @@ import CustomDropdown from './CustomDropdown';
 
 let initialLibraryLoad = true;
 
-const MangaCard = ({ manga, onClick, fixJagged, rotatingCovers, rotatingCoversInterval, gridSize, nsfwDisplay }) => {
+const MangaCard = ({ manga, onClick, onContextMenu, fixJagged, rotatingCovers, rotatingCoversInterval, gridSize, nsfwDisplay }) => {
     const hasVersions = manga.versions && manga.versions.length > 0;
     const isBlur = nsfwDisplay === 'blur' && manga.isNsfw;
 
@@ -74,7 +74,7 @@ const MangaCard = ({ manga, onClick, fixJagged, rotatingCovers, rotatingCoversIn
 
     return (
         <div style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
-            <div className="manga-card" onClick={onClick} style={{ flex: 1 }}>
+            <div className="manga-card" onClick={onClick} onContextMenu={onContextMenu} style={{ flex: 1 }}>
                 <div className="manga-card-img">
                     {validCovers.length > 0 ? (
                         validCovers.map((cov, i) => (
@@ -261,6 +261,47 @@ const Library = ({ onSelectManga, refresh, activeCategory }) => {
     const [rotatingCoversInterval, setRotatingCoversInterval] = useState(() => parseInt(localStorage.getItem('kodo-rotating-covers-interval')) || 3500);
     const [nsfwDisplay, setNsfwDisplay] = useState(() => localStorage.getItem('kodo-nsfw-display') || 'blur');
     const [isRefreshing, setIsRefreshing] = useState(false);
+
+    const [categories, setCategories] = useState([]);
+    const [contextMenu, setContextMenu] = useState(null);
+
+    useEffect(() => {
+        fetch('/api/categories')
+            .then(res => res.json())
+            .then(data => setCategories(data))
+            .catch(() => { });
+        const closeMenu = () => setContextMenu(null);
+        window.addEventListener('click', closeMenu);
+        return () => window.removeEventListener('click', closeMenu);
+    }, []);
+
+    const handleContextMenu = (e, mangaObj) => {
+        e.preventDefault();
+        setContextMenu({ x: e.clientX, y: e.clientY, manga: mangaObj });
+    };
+
+    const handleMoveToCategory = async (catName, mangaObj) => {
+        const formData = new FormData();
+        let newCats = [...(mangaObj.categories || [])];
+        if (!newCats.includes(catName)) newCats.push(catName);
+        formData.append('categories', JSON.stringify(newCats));
+
+        try {
+            await fetch(apiUrl(`/api/manga/${encodeURIComponent(mangaObj.id)}`), { method: 'PUT', body: formData });
+            setManga(prev => prev.map(m => m.id === mangaObj.id ? { ...m, categories: newCats } : m));
+        } catch { }
+    };
+
+    const handleRemoveFromCategory = async (catName, mangaObj) => {
+        const formData = new FormData();
+        let newCats = (mangaObj.categories || []).filter(c => c !== catName);
+        formData.append('categories', JSON.stringify(newCats));
+
+        try {
+            await fetch(apiUrl(`/api/manga/${encodeURIComponent(mangaObj.id)}`), { method: 'PUT', body: formData });
+            setManga(prev => prev.map(m => m.id === mangaObj.id ? { ...m, categories: newCats } : m));
+        } catch { }
+    };
 
     // Listen for changes from Settings page
     useEffect(() => {
@@ -571,10 +612,50 @@ const Library = ({ onSelectManga, refresh, activeCategory }) => {
                     </div>
                 ) : (
                     <div className="manga-grid">
-                        {filtered.map(m => <MangaCard key={m.id} manga={m} fixJagged={fixJagged} rotatingCovers={rotatingCovers} rotatingCoversInterval={rotatingCoversInterval} gridSize={gridSize} nsfwDisplay={nsfwDisplay} onClick={() => onSelectManga(m)} />)}
+                        {filtered.map(m => <MangaCard key={m.id} manga={m} fixJagged={fixJagged} rotatingCovers={rotatingCovers} rotatingCoversInterval={rotatingCoversInterval} gridSize={gridSize} nsfwDisplay={nsfwDisplay} onClick={() => onSelectManga(m)} onContextMenu={(e) => handleContextMenu(e, m)} />)}
                     </div>
                 )}
             </div>
+            {contextMenu && (
+                <div style={{
+                    position: 'fixed', left: Math.min(contextMenu.x, window.innerWidth - 180), top: Math.min(contextMenu.y, window.innerHeight - 200),
+                    background: 'var(--surface)', border: '1px solid var(--border)',
+                    borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                    zIndex: 9999, display: 'flex', flexDirection: 'column',
+                    padding: 4, minWidth: 160
+                }} onClick={e => e.stopPropagation()}>
+                    <div style={{ padding: '6px 12px', fontSize: 11, fontWeight: 700, color: 'var(--muted)', borderBottom: '1px solid var(--border)', marginBottom: 4 }}>
+                        Move to Category
+                    </div>
+                    {categories.filter(c => c !== activeCategory).map(cat => (
+                        <button
+                            key={cat}
+                            onClick={() => { handleMoveToCategory(cat, contextMenu.manga); setContextMenu(null); }}
+                            style={{ padding: '8px 12px', textAlign: 'left', background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', borderRadius: 4, fontSize: 13 }}
+                            onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                        >
+                            {cat}
+                        </button>
+                    ))}
+                    {categories.filter(c => c !== activeCategory).length === 0 && (
+                        <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>No other categories</div>
+                    )}
+                    {activeCategory && (
+                        <>
+                            <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+                            <button
+                                onClick={() => { handleRemoveFromCategory(activeCategory, contextMenu.manga); setContextMenu(null); }}
+                                style={{ padding: '8px 12px', textAlign: 'left', background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', borderRadius: 4, fontSize: 13 }}
+                                onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.1)'}
+                                onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                            >
+                                Remove from this Category
+                            </button>
+                        </>
+                    )}
+                </div>
+            )}
         </>
     );
 };

@@ -21,7 +21,9 @@ async function bootstrap() {
       const key = String(e.key || '').toLowerCase()
       const blockFind = (e.ctrlKey || e.metaKey) && key === 'f'
       const blockRefresh = key === 'f5'
-      if (!blockFind && !blockRefresh) return
+      const blockF3 = key === 'f3'
+      const blockF12 = key === 'f12'
+      if (!blockFind && !blockRefresh && !blockF3 && !blockF12) return
       e.preventDefault()
       e.stopPropagation()
     }, { capture: true })
