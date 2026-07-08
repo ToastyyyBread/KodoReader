@@ -2689,11 +2689,11 @@ app.get('/api/compress/queue', (_req, res) => {
 
 app.post('/api/compress/add', (req, res) => {
     try {
-        const { mangaId, mangaTitle, chapters, versionId, preset, quality, grayscale, sharpen, maxWidth, maxHeight } = req.body;
+        const { mangaId, mangaTitle, chapters, versionId, preset, quality, smartSubsample, effort, lossless, grayscale, sharpen, maxWidth, maxHeight } = req.body;
         if (!mangaId || !chapters || !chapters.length) {
             return res.status(400).json({ error: 'mangaId and chapters[] required' });
         }
-        const job = compressor.addJob({ mangaId, mangaTitle, chapters, versionId, preset, quality, grayscale, sharpen, maxWidth, maxHeight });
+        const job = compressor.addJob({ mangaId, mangaTitle, chapters, versionId, preset, quality, smartSubsample, effort, lossless, grayscale, sharpen, maxWidth, maxHeight });
         res.json(job);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -2776,9 +2776,13 @@ app.post('/api/compress/archive/delete', (req, res) => {
 app.post('/api/compress/archive/restore', (req, res) => {
     const { seriesId, chapters } = req.body;
     const archDir = path.join(APP_ROOT, 'data', 'compress-archive', seriesId);
-    const mangaDir = path.join(MANGA_PATH, seriesId);
     if (!fs.existsSync(archDir)) return res.status(404).json({ error: 'Not found' });
     try {
+        // Resolve the actual manga directory — respects sourcePath from meta.json
+        const meta = loadMeta();
+        const mangaDir = resolveMangaDir(seriesId, meta);
+        fs.ensureDirSync(mangaDir);
+
         const filesToRestore = chapters && chapters.length > 0 ? chapters.map(c => c + '.cbz') : fs.readdirSync(archDir).filter(c => c.endsWith('.cbz'));
         for (const f of filesToRestore) {
             const src = path.join(archDir, f);

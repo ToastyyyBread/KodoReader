@@ -1252,6 +1252,7 @@ const addJob = (opts) => {
     const job = {
         id: generateId(),
         mangaId: opts.mangaId,
+        mangaTitle: opts.mangaTitle || opts.mangaId,
         chapters: opts.chapters,
         model: opts.model,
         scale: normalizedScale,

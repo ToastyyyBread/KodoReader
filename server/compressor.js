@@ -16,6 +16,16 @@ fs.ensureDirSync(COMPRESS_STAGING);
 
 const IMAGE_EXT = /\.(jpg|jpeg|png|webp|avif)$/i;
 
+// Effort label -> numeric value for sharp WebP (0-6)
+const EFFORT_MAP = {
+    fastest: 0,
+    fast:    2,
+    balanced: 4,
+    good:    5,
+    best:    6,
+    maximum: 6,
+};
+
 const loadMeta = () => {
     try { return fs.readJsonSync(META_PATH); } catch { return {}; }
 };
@@ -59,15 +69,13 @@ const resolveVersionDir = (id, vId, meta = loadMeta()) => {
     return path.join(MANGA_PATH, id, 'versions', vId);
 };
 
-// ── Settings ──────────────────────────────────────────────
+// Settings
 const defaultSettings = {
-    quality: 82,
-    preset: 'manhwa',       // 'manga' | 'manhwa'
-    sharpen: true,
-    grayscale: false,        // auto for manga preset
-    maxWidth: 0,             // 0 = no resize
-    maxHeight: 0,
-    afterCompress: 'review', // 'review' | 'delete'
+    quality: 80,           // Menjaga detail gambar & kejelasan teks
+    smartSubsample: true,  // WAJIB: Menjaga teks dialog agar tidak blur/berbayang
+    effort: 'best',        // Kompresi paling maksimal (hemat memori penyimpanan)
+    lossless: false,       // Gunakan lossy agar ukuran file turun drastis
+    afterCompress: 'review',
 };
 
 const loadSettings = () => {
@@ -76,39 +84,10 @@ const loadSettings = () => {
 };
 const saveSettings = (s) => fs.writeJsonSync(SETTINGS_PATH, s, { spaces: 2 });
 
-// ── Presets ───────────────────────────────────────────────
-const PRESETS = {
-    manga: {
-        label: 'Manga',
-        desc: 'Black & white manga — converts to grayscale, aggressive compression',
-        quality: 78,
-        grayscale: true,
-        sharpen: true,
-    },
-    manhwa: {
-        label: 'Manhwa',
-        desc: 'Full-color webtoon/manhwa — preserves colors, balanced compression',
-        quality: 82,
-        grayscale: false,
-        sharpen: true,
-    },
-    aggressive: {
-        label: 'Aggressive',
-        desc: 'Maximum compression — smallest file size, some quality loss',
-        quality: 65,
-        grayscale: false,
-        sharpen: false,
-    },
-    lossless: {
-        label: 'Lossless-ish',
-        desc: 'Minimal compression — nearly original quality, larger files',
-        quality: 95,
-        grayscale: false,
-        sharpen: true,
-    },
-};
+// PRESETS kept as empty object for backwards compat with exports
+const PRESETS = {};
 
-// ── Queue ─────────────────────────────────────────────────
+// Queue
 let compressQueue = [];
 let isCompressing = false;
 
@@ -116,18 +95,17 @@ const getQueue = () => compressQueue;
 
 const addJob = (job) => {
     const id = 'cj_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+    const settings = loadSettings();
     const newJob = {
         id,
         mangaId: job.mangaId,
         mangaTitle: job.mangaTitle,
         chapters: job.chapters,
         versionId: job.versionId || null,
-        preset: job.preset || 'manhwa',
-        quality: job.quality ?? PRESETS[job.preset]?.quality ?? 82,
-        grayscale: job.grayscale ?? PRESETS[job.preset]?.grayscale ?? false,
-        sharpen: job.sharpen ?? PRESETS[job.preset]?.sharpen ?? true,
-        maxWidth: job.maxWidth || 0,
-        maxHeight: job.maxHeight || 0,
+        quality:        job.quality        ?? settings.quality,
+        smartSubsample: job.smartSubsample ?? settings.smartSubsample,
+        effort:         job.effort         ?? settings.effort,
+        lossless:       job.lossless       ?? settings.lossless,
         status: 'queued',
         progress: 0,
         totalPages: 0,
@@ -145,8 +123,6 @@ const addJob = (job) => {
 
 const removeJob = (jobId) => {
     compressQueue = compressQueue.filter(j => j.id !== jobId);
-
-    // Clean staging just in case
     try {
         const stagingDir = path.join(COMPRESS_STAGING, jobId);
         if (fs.existsSync(stagingDir)) fs.removeSync(stagingDir);
@@ -161,7 +137,7 @@ const abortCompression = () => {
     }
 };
 
-// ── Process Queue ─────────────────────────────────────────
+// Process Queue
 async function processQueue() {
     if (isCompressing) return;
     const next = compressQueue.find(j => j.status === 'queued');
@@ -198,7 +174,6 @@ async function processQueue() {
     }
 
     isCompressing = false;
-    // Process next in queue
     processQueue();
 }
 
@@ -220,7 +195,6 @@ function finalizeJob(jobId, action) {
             const stgPath = path.join(stagingDir, ch + '.cbz');
             if (fs.existsSync(stgPath)) {
                 if (action === 'archive' && fs.existsSync(cbzPath)) {
-                    // Move original to archive
                     const archDir = path.join(APP_ROOT, 'data', 'compress-archive', job.mangaId);
                     fs.ensureDirSync(archDir);
                     const archPath = path.join(archDir, ch + '.cbz');
@@ -230,7 +204,6 @@ function finalizeJob(jobId, action) {
                 }
                 fs.copySync(stgPath, cbzPath, { overwrite: true });
             }
-            // Clear cbz-cache
             const cacheNamePart = (job.versionId && job.versionId !== 'default') ? `${job.versionId}_${ch}` : ch;
             const cacheDir = path.join(APP_ROOT, 'data', 'cbz-cache', job.mangaId, cacheNamePart);
             if (fs.existsSync(cacheDir)) fs.removeSync(cacheDir);
@@ -252,7 +225,7 @@ function discardJob(jobId) {
     const stagingDir = path.join(COMPRESS_STAGING, jobId);
     if (fs.existsSync(stagingDir)) fs.removeSync(stagingDir);
 
-    job.status = 'cancelled'; // or done, but cancelled clears it correctly
+    job.status = 'cancelled';
     setTimeout(() => removeJob(jobId), 5000);
     return true;
 }
@@ -267,22 +240,21 @@ async function compressChapter(job, chapterName) {
     const cbzPath = path.join(mangaDir, cbzFile);
 
     if (!fs.existsSync(cbzPath)) {
-        console.log(`[Compressor] Skipping ${chapterName} — CBZ not found at ${cbzPath}`);
+        console.log(`[Compressor] Skipping ${chapterName} - CBZ not found at ${cbzPath}`);
         return false;
     }
 
-    // Warn if already compressed before
     const backupPath = cbzPath + '.backup';
     if (fs.existsSync(backupPath)) {
-        console.log(`[Compressor] ⚠ ${chapterName}: Backup already exists — re-compressing an already compressed CBZ may yield limited results`);
+        console.log(`[Compressor] WARNING ${chapterName}: Backup already exists - re-compressing an already compressed CBZ may yield limited results`);
     }
 
     const originalStat = await fs.stat(cbzPath);
     const chapterOrigSize = originalStat.size;
     job.originalSize += chapterOrigSize;
 
-    // Extract CBZ
-    const tempDir = path.join(COMPRESS_TEMP, job.id, chapterName);
+    const safeDirName = chapterName.replace(/[/\\:*?"<>|]/g, '_');
+    const tempDir = path.join(COMPRESS_TEMP, job.id, safeDirName);
     fs.ensureDirSync(tempDir);
 
     const zip = new AdmZip(cbzPath);
@@ -291,14 +263,15 @@ async function compressChapter(job, chapterName) {
         .sort((a, b) => a.entryName.localeCompare(b.entryName, undefined, { numeric: true, sensitivity: 'base' }));
 
     job.totalPages += entries.length;
-    console.log(`[Compressor] ${chapterName}: ${entries.length} images, original CBZ ${(chapterOrigSize / 1024 / 1024).toFixed(2)} MB, quality=${job.quality}`);
 
-    // Compress each image
+    const effortNum = EFFORT_MAP[job.effort] ?? EFFORT_MAP['best'];
+
+    console.log(`[Compressor] ${chapterName}: ${entries.length} images, original ${(chapterOrigSize / 1024 / 1024).toFixed(2)} MB, quality=${job.quality}, effort=${job.effort}(${effortNum}), smartSubsample=${job.smartSubsample}, lossless=${job.lossless}`);
+
     let totalOrigImgSize = 0;
     let totalNewImgSize = 0;
     let failCount = 0;
 
-    // Batch process images concurrently to utilize all CPU threads
     const CONCURRENCY = Math.max(3, os.cpus().length);
     for (let i = 0; i < entries.length; i += CONCURRENCY) {
         if (job._abort) return;
@@ -306,7 +279,7 @@ async function compressChapter(job, chapterName) {
 
         await Promise.all(chunk.map(async (entry, chunkIdx) => {
             const baseName = path.basename(entry.entryName);
-            const outName = baseName.replace(/\.(png|webp|avif)$/i, '.jpg');
+            const outName = baseName.replace(/\.(jpg|jpeg|png|webp|avif)$/i, '.webp');
             const outPath = path.join(tempDir, outName);
 
             try {
@@ -320,45 +293,38 @@ async function compressChapter(job, chapterName) {
                     return;
                 }
 
-                // Track sizes (thread-safe addition)
                 totalOrigImgSize += inputBuffer.length;
 
-                // Build the sharp pipeline
-                // limitInputPixels: false prevents errors on huge long-strip manhwa images (>268MP)
+                // WebP has a hard limit of 16383 x 16383 px.
+                // Webtoon/manhwa long-strips commonly exceed this (e.g. 1440 x 29000+).
+                // If exceeded, resize proportionally (maintaining aspect ratio) to fit within
+                // the limit using fit:'inside', then convert to WebP as usual.
+                const WEBP_MAX = 16383;
+                const imgMeta = await sharp(inputBuffer, { failOn: 'none', limitInputPixels: false }).metadata();
+                const exceedsWebP = (imgMeta.width > WEBP_MAX || imgMeta.height > WEBP_MAX);
+
                 let pipeline = sharp(inputBuffer, { failOn: 'none', limitInputPixels: false });
-
-                // Resize if specified
-                if (job.maxWidth > 0 || job.maxHeight > 0) {
-                    pipeline = pipeline.resize({
-                        width: job.maxWidth || undefined,
-                        height: job.maxHeight || undefined,
-                        fit: 'inside',
-                        withoutEnlargement: true,
-                    });
+                if (exceedsWebP) {
+                    // fit:'inside' scales down so both dimensions stay within WEBP_MAX,
+                    // preserving the original aspect ratio exactly.
+                    pipeline = pipeline.resize(WEBP_MAX, WEBP_MAX, { fit: 'inside', withoutEnlargement: true });
+                    const globalIdx = i + chunkIdx;
+                    if (globalIdx < 5) {
+                        console.log(`[Compressor]   [${globalIdx + 1}] ${baseName}: ${imgMeta.width}x${imgMeta.height} exceeds WebP limit, resizing to fit ${WEBP_MAX}px`);
+                    }
                 }
 
-                // Grayscale
-                if (job.grayscale) {
-                    pipeline = pipeline.grayscale();
-                }
-
-                // Sharpen (subtle — preserves line art)
-                // Note: Sharpening massively increases CPU time for large images
-                if (job.sharpen) {
-                    pipeline = pipeline.sharpen({ sigma: 0.5, flat: 0.5, jagged: 0.3 });
-                }
-
-                // Force re-encode as optimized JPEG using MozJPEG
                 const { data: outputBuffer } = await pipeline
-                    .jpeg({
-                        quality: job.quality,
-                        mozjpeg: true,
-                        chromaSubsampling: job.grayscale ? '4:4:4' : '4:2:0',
-                        force: true,
+                    .webp({
+                        quality:        job.quality,
+                        smartSubsample: job.smartSubsample,
+                        effort:         effortNum,
+                        lossless:       job.lossless,
                     })
                     .toBuffer({ resolveWithObject: true });
 
-                if (outputBuffer.length >= inputBuffer.length) {
+                if (outputBuffer.length >= inputBuffer.length && !exceedsWebP) {
+                    // WebP is larger than original AND no resize was needed - keep original
                     fs.writeFileSync(path.join(tempDir, baseName), inputBuffer);
                     totalNewImgSize += inputBuffer.length;
                 } else {
@@ -366,27 +332,25 @@ async function compressChapter(job, chapterName) {
                     totalNewImgSize += outputBuffer.length;
                 }
 
-                // Log first few images for debugging
-                const absoluteIndex = i + chunkIdx;
-                if (absoluteIndex < 3) {
-                    const finalLength = outputBuffer.length >= inputBuffer.length ? inputBuffer.length : outputBuffer.length;
+                const globalIdx = i + chunkIdx;
+                if (globalIdx < 5) {
+                    const finalLength = (outputBuffer.length >= inputBuffer.length && !exceedsWebP) ? inputBuffer.length : outputBuffer.length;
                     const pctDiff = Math.round((1 - finalLength / inputBuffer.length) * 100);
-                    console.log(`[Compressor]   ${baseName}: ${(inputBuffer.length / 1024).toFixed(0)} KB → ${(finalLength / 1024).toFixed(0)} KB (${pctDiff}%)`);
+                    const note = exceedsWebP ? ' [resized]' : (outputBuffer.length >= inputBuffer.length ? ' [kept original]' : '');
+                    console.log(`[Compressor]   [${globalIdx + 1}] ${baseName} -> ${(outputBuffer.length >= inputBuffer.length && !exceedsWebP) ? baseName : outName}: ${(inputBuffer.length / 1024).toFixed(0)} KB -> ${(finalLength / 1024).toFixed(0)} KB (${pctDiff}%)${note}`);
                 }
 
             } catch (err) {
-                // Fallback: copy original data as-is
-                console.error(`[Compressor] ✗ Failed to compress ${baseName}:`, err.message);
+                console.error(`[Compressor] Failed to compress ${baseName}:`, err.message);
                 failCount++;
                 try {
                     const origData = entry.getData();
                     if (origData && origData.length > 0) {
                         fs.writeFileSync(path.join(tempDir, baseName), origData);
-                        totalOrigImgSize += origData.length;
                         totalNewImgSize += origData.length;
                     }
                 } catch (innerErr) {
-                    console.error(`[Compressor] ✗ Also failed to fallback for ${baseName}:`, innerErr.message);
+                    console.error(`[Compressor] Also failed to fallback for ${baseName}:`, innerErr.message);
                 }
             }
         }));
@@ -396,7 +360,7 @@ async function compressChapter(job, chapterName) {
     }
 
     const imgReduction = totalOrigImgSize > 0 ? Math.round((1 - totalNewImgSize / totalOrigImgSize) * 100) : 0;
-    console.log(`[Compressor] ${chapterName}: Images ${(totalOrigImgSize / 1024 / 1024).toFixed(2)} MB → ${(totalNewImgSize / 1024 / 1024).toFixed(2)} MB (${imgReduction}% reduced)${failCount > 0 ? ` — ${failCount} failed` : ''}`);
+    console.log(`[Compressor] ${chapterName}: Images ${(totalOrigImgSize / 1024 / 1024).toFixed(2)} MB -> ${(totalNewImgSize / 1024 / 1024).toFixed(2)} MB (${imgReduction}% reduced)${failCount > 0 ? ` - ${failCount} failed` : ''}`);
 
     // Rebuild CBZ
     const newZip = new AdmZip();
@@ -408,7 +372,6 @@ async function compressChapter(job, chapterName) {
         newZip.addLocalFile(path.join(tempDir, f));
     }
 
-    // Write new to staging
     const stagingDir = path.join(COMPRESS_STAGING, job.id);
     fs.ensureDirSync(stagingDir);
     const stagingPath = path.join(stagingDir, cbzFile);
@@ -418,14 +381,13 @@ async function compressChapter(job, chapterName) {
     const chapterNewSize = newStat.size;
     job.compressedSize += chapterNewSize;
 
-    console.log(`[Compressor] ${chapterName}: CBZ ${(chapterOrigSize / 1024 / 1024).toFixed(2)} MB → ${(chapterNewSize / 1024 / 1024).toFixed(2)} MB (${Math.round((1 - chapterNewSize / chapterOrigSize) * 100)}% reduced)`);
+    console.log(`[Compressor] ${chapterName}: CBZ ${(chapterOrigSize / 1024 / 1024).toFixed(2)} MB -> ${(chapterNewSize / 1024 / 1024).toFixed(2)} MB (${Math.round((1 - chapterNewSize / chapterOrigSize) * 100)}% reduced)`);
 
-    // Clean up temp
     await fs.remove(tempDir);
     return true;
 }
 
-// ── Analyze a CBZ (get info without compressing) ──────────
+// Analyze a CBZ (get info without compressing)
 async function analyzeCbz(mangaId, chapterName, versionId) {
     const meta = loadMeta();
     const mangaDir = versionId && versionId !== 'default'
@@ -447,7 +409,7 @@ async function analyzeCbz(mangaId, chapterName, versionId) {
     };
 }
 
-// ── Restore backup ────────────────────────────────────────
+// Restore backup
 async function restoreBackup(mangaId, chapterName, versionId) {
     const meta = loadMeta();
     const mangaDir = versionId && versionId !== 'default'

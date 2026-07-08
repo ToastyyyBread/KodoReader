@@ -37,6 +37,12 @@ const formatChapterName = (name) => {
     return m ? `Chapter - ${m[1].padStart(2, '0')}` : name;
 };
 
+const parseChapterNum = (name) => {
+    if (!name) return 0;
+    const match = name.match(/(?:chapter|ch|c)\s*[-_]?\s*([\d\.]+)/i) || name.match(/([\d\.]+)/);
+    return match ? parseFloat(match[1]) : 0;
+};
+
 // ── Series Library Modal ─────────────────────────────────
 const SeriesPickerModal = ({ library, onSelect, onClose }) => {
     const [search, setSearch] = useState('');
@@ -239,6 +245,72 @@ const Upscaler = () => {
     const [esrganWorkers, setEsrganWorkers] = useState(1);
     const [activeModel, setActiveModel] = useState(() => sessionStorage.getItem('kodo_upscaler_model') || null);
 
+    const [selectMode, setSelectMode] = useState(() => sessionStorage.getItem('kodo_upscaler_select_mode') || 'range');
+    const [customSelectedChapters, setCustomSelectedChapters] = useState(() => {
+        try { return JSON.parse(sessionStorage.getItem('kodo_upscaler_custom_chapters')) || []; } catch { return []; }
+    });
+
+    // Chapter range input states
+    const [startInputVal, setStartInputVal] = useState('');
+    const [endInputVal, setEndInputVal] = useState('');
+
+    const findChapterIndexByNum = useCallback((num) => {
+        if (isNaN(num)) return -1;
+        let idx = chapters.findIndex(ch => parseChapterNum(ch) === num);
+        if (idx !== -1) return idx;
+        let closestIdx = -1;
+        let minDiff = Infinity;
+        for (let i = 0; i < chapters.length; i++) {
+            const diff = Math.abs(parseChapterNum(chapters[i]) - num);
+            if (diff < minDiff) {
+                minDiff = diff;
+                closestIdx = i;
+            }
+        }
+        return closestIdx;
+    }, [chapters]);
+
+    useEffect(() => {
+        if (chapters.length > 0) {
+            const startCh = chapters[Math.max(0, Math.min(startIdx - 1, chapters.length - 1))];
+            const startNum = parseChapterNum(startCh);
+            if (isNaN(parseFloat(startInputVal)) || parseFloat(startInputVal) !== startNum) {
+                setStartInputVal(String(startNum));
+            }
+
+            const endCh = chapters[Math.max(0, Math.min(endIdx - 1, chapters.length - 1))];
+            const endNum = parseChapterNum(endCh);
+            if (isNaN(parseFloat(endInputVal)) || parseFloat(endInputVal) !== endNum) {
+                setEndInputVal(String(endNum));
+            }
+        } else {
+            setStartInputVal('');
+            setEndInputVal('');
+        }
+    }, [startIdx, endIdx, chapters]);
+
+    const handleStartInputChange = (valStr) => {
+        setStartInputVal(valStr);
+        const parsed = parseFloat(valStr);
+        if (!isNaN(parsed)) {
+            const idx = findChapterIndexByNum(parsed);
+            if (idx !== -1) {
+                setStartIdx(idx + 1);
+            }
+        }
+    };
+
+    const handleEndInputChange = (valStr) => {
+        setEndInputVal(valStr);
+        const parsed = parseFloat(valStr);
+        if (!isNaN(parsed)) {
+            const idx = findChapterIndexByNum(parsed);
+            if (idx !== -1) {
+                setEndIdx(idx + 1);
+            }
+        }
+    };
+
     useEffect(() => {
         if (selectedManga) sessionStorage.setItem('kodo_upscaler_manga', JSON.stringify(selectedManga));
         else sessionStorage.removeItem('kodo_upscaler_manga');
@@ -258,6 +330,11 @@ const Upscaler = () => {
         if (startIdx) sessionStorage.setItem('kodo_upscaler_start', startIdx);
         if (endIdx) sessionStorage.setItem('kodo_upscaler_end', endIdx);
     }, [startIdx, endIdx]);
+
+    useEffect(() => {
+        sessionStorage.setItem('kodo_upscaler_select_mode', selectMode);
+        sessionStorage.setItem('kodo_upscaler_custom_chapters', JSON.stringify(customSelectedChapters));
+    }, [selectMode, customSelectedChapters]);
     const [queue, setQueue] = useState([]);
     const [addingToQueue, setAddingToQueue] = useState(false);
     const [showPicker, setShowPicker] = useState(false);
@@ -411,9 +488,17 @@ const Upscaler = () => {
     }, []);
 
     // ── Derived ──────────────────────────────────────────
-    const isInvalidRange = startIdx > endIdx || startIdx < 1 || (chapters.length > 0 && endIdx > chapters.length);
+    const isInvalidRange = selectMode === 'range' && (startIdx > endIdx || startIdx < 1 || (chapters.length > 0 && endIdx > chapters.length));
     const selectedChapters = (() => {
-        if (!chapters.length || isInvalidRange) return [];
+        if (!chapters.length) return [];
+        if (selectMode === 'single') {
+            const idx = Math.max(0, Math.min(startIdx - 1, chapters.length - 1));
+            return [chapters[idx]];
+        }
+        if (selectMode === 'custom') {
+            return customSelectedChapters;
+        }
+        if (isInvalidRange) return [];
         return chapters.slice(startIdx - 1, endIdx);
     })();
 
@@ -423,7 +508,7 @@ const Upscaler = () => {
     const exeReady = activeModel === 'waifu2x' ? waifu2xOk : activeModel === 'realesrgan' ? realesrganOk : false;
 
     const resolvedModel = activeModel === 'waifu2x' ? waifu2xModel : realesrganModel;
-    const canSubmit = selectedManga && activeModel && (upscaleType === 'cover' || (selectedChapters.length > 0 && !isInvalidRange));
+    const canSubmit = selectedManga && activeModel && (upscaleType === 'cover' || (selectedChapters.length > 0 && (selectMode !== 'range' || !isInvalidRange)));
     const activeJob = queue.find(j => j.status === 'processing');
     const isProcessing = !!activeJob;
 
@@ -493,10 +578,10 @@ const Upscaler = () => {
     };
 
     const groupedQueue = [];
-    queue.forEach(job => {
+    queue.filter(j => j.status !== 'cancelled').forEach(job => {
         let group = groupedQueue.find(g => g.mangaId === job.mangaId);
         if (!group) {
-            group = { mangaId: job.mangaId, mangaTitle: job.mangaTitle, jobs: [] };
+            group = { mangaId: job.mangaId, mangaTitle: job.mangaTitle || job.mangaId, jobs: [] };
             groupedQueue.push(group);
         }
         group.jobs.push(job);
@@ -599,7 +684,7 @@ const Upscaler = () => {
                         {/* ── Step 1: Series ─────────────────────── */}
                         <div className="settings-card">
                             <div style={{ padding: '14px 18px', borderBottom: selectedManga ? '1px solid var(--border)' : 'none' }}>
-                                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>1 · Select Series</div>
+                                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>Select Series</div>
                                 <div
                                     onClick={() => setShowPicker(true)}
                                     style={{
@@ -640,7 +725,7 @@ const Upscaler = () => {
                             {selectedManga && (
                                 <div style={{ padding: '14px 18px' }}>
                                     <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>
-                                        2 · Select Target
+                                        Select Target
                                     </div>
                                     <div style={{ display: 'flex', background: 'var(--surface)', padding: 4, borderRadius: 10, border: '1px solid var(--border)', marginBottom: 14 }}>
                                         <div onClick={() => setUpscaleType('chapters')} style={{ flex: 1, textAlign: 'center', padding: '6px 0', fontSize: 12, fontWeight: 600, background: upscaleType === 'chapters' ? 'var(--surface2)' : 'transparent', borderRadius: 6, cursor: 'pointer', transition: 'all 0.2s', color: upscaleType === 'chapters' ? 'var(--text)' : 'var(--muted)' }}>Chapters</div>
@@ -654,7 +739,7 @@ const Upscaler = () => {
                                     ) : (
                                         <>
                                             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>
-                                                Range
+                                                Chapters
                                                 {selectedChapters.length > 0 && (
                                                     <span style={{ marginLeft: 8, color: 'var(--accent)', textTransform: 'none', letterSpacing: 0, fontSize: 11, fontWeight: 600 }}>
                                                         · {selectedChapters.length} chapter{selectedChapters.length > 1 ? 's' : ''} selected
@@ -667,19 +752,35 @@ const Upscaler = () => {
                                                 <div style={{ fontSize: 12, color: 'var(--muted)' }}>No chapters found</div>
                                             ) : (
                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                                    {/* Selection Mode Toggle */}
+                                                    <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', color: selectMode === 'range' ? 'var(--text)' : 'var(--muted)' }}>
+                                                            <input type="radio" name="upscaleSelectMode" checked={selectMode === 'range'} onChange={() => setSelectMode('range')} style={{ accentColor: 'var(--accent)' }} />
+                                                            Range
+                                                        </label>
+                                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', color: selectMode === 'single' ? 'var(--text)' : 'var(--muted)' }}>
+                                                            <input type="radio" name="upscaleSelectMode" checked={selectMode === 'single'} onChange={() => setSelectMode('single')} style={{ accentColor: 'var(--accent)' }} />
+                                                            Single
+                                                        </label>
+                                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', color: selectMode === 'custom' ? 'var(--text)' : 'var(--muted)' }}>
+                                                            <input type="radio" name="upscaleSelectMode" checked={selectMode === 'custom'} onChange={() => setSelectMode('custom')} style={{ accentColor: 'var(--accent)' }} />
+                                                            Multiple
+                                                        </label>
+                                                    </div>
+
                                                     <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
                                                         <div style={{ flex: 1 }}>
-                                                            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Start Chapter</div>
+                                                            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>
+                                                                {selectMode === 'custom' ? 'Select Chapter' : 'Start Chapter'}
+                                                            </div>
                                                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                                                 <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface)', border: `1px solid ${isInvalidRange ? '#ef4444' : 'var(--border)'}`, borderRadius: 6, overflow: 'hidden' }}>
                                                                     <button
                                                                         onClick={() => setStartIdx(v => Math.max(1, v - 1))}
                                                                         style={{ padding: '6px 10px', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>-</button>
                                                                     <input
-                                                                        type="number" min="1" max={chapters.length}
-                                                                        value={startIdx} onChange={e => setStartIdx(parseInt(e.target.value) || 1)}
-                                                                        className="hide-spin"
-                                                                        style={{ ...inputStyle, width: 44, border: 'none', padding: '6px 0', borderRadius: 0, background: 'transparent' }}
+                                                                        type="text" value={startInputVal} onChange={e => handleStartInputChange(e.target.value)}
+                                                                        style={{ ...inputStyle, width: 52, border: 'none', padding: '6px 0', borderRadius: 0, background: 'transparent' }}
                                                                     />
                                                                     <button
                                                                         onClick={() => setStartIdx(v => Math.min(chapters.length, v + 1))}
@@ -690,30 +791,73 @@ const Upscaler = () => {
                                                                 </div>
                                                             </div>
                                                         </div>
-                                                        <div style={{ width: 1, height: 32, background: 'var(--border)', alignSelf: 'center', margin: '0 4px' }} />
-                                                        <div style={{ flex: 1 }}>
-                                                            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>End Chapter</div>
-                                                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                                                <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface)', border: `1px solid ${isInvalidRange ? '#ef4444' : 'var(--border)'}`, borderRadius: 6, overflow: 'hidden' }}>
-                                                                    <button
-                                                                        onClick={() => setEndIdx(v => Math.max(1, v - 1))}
-                                                                        style={{ padding: '6px 10px', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>-</button>
-                                                                    <input
-                                                                        type="number" min="1" max={chapters.length}
-                                                                        value={endIdx} onChange={e => setEndIdx(parseInt(e.target.value) || 1)}
-                                                                        className="hide-spin"
-                                                                        style={{ ...inputStyle, width: 44, border: 'none', padding: '6px 0', borderRadius: 0, background: 'transparent' }}
-                                                                    />
-                                                                    <button
-                                                                        onClick={() => setEndIdx(v => Math.min(chapters.length, v + 1))}
-                                                                        style={{ padding: '6px 10px', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>+</button>
+
+                                                        {selectMode === 'range' && (
+                                                            <>
+                                                                <div style={{ width: 1, height: 32, background: 'var(--border)', alignSelf: 'center', margin: '0 4px' }} />
+                                                                <div style={{ flex: 1 }}>
+                                                                    <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>End Chapter</div>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface)', border: `1px solid ${isInvalidRange ? '#ef4444' : 'var(--border)'}`, borderRadius: 6, overflow: 'hidden' }}>
+                                                                            <button
+                                                                                onClick={() => setEndIdx(v => Math.max(1, v - 1))}
+                                                                                style={{ padding: '6px 10px', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>-</button>
+                                                                            <input
+                                                                                type="text" value={endInputVal} onChange={e => handleEndInputChange(e.target.value)}
+                                                                                style={{ ...inputStyle, width: 52, border: 'none', padding: '6px 0', borderRadius: 0, background: 'transparent' }}
+                                                                            />
+                                                                            <button
+                                                                                onClick={() => setEndIdx(v => Math.min(chapters.length, v + 1))}
+                                                                                style={{ padding: '6px 10px', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>+</button>
+                                                                        </div>
+                                                                        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
+                                                                            {formatChapterName(chapters[Math.max(0, Math.min(endIdx - 1, chapters.length - 1))])}
+                                                                        </div>
+                                                                    </div>
                                                                 </div>
-                                                                <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
-                                                                    {formatChapterName(chapters[Math.max(0, Math.min(endIdx - 1, chapters.length - 1))])}
+                                                            </>
+                                                        )}
+
+                                                        {selectMode === 'custom' && (
+                                                            <>
+                                                                <div style={{ width: 1, height: 32, background: 'var(--border)', alignSelf: 'center', margin: '0 4px' }} />
+                                                                <div style={{ flex: 1, alignSelf: 'flex-end' }}>
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            const ch = chapters[startIdx - 1];
+                                                                            if (ch && !customSelectedChapters.includes(ch)) {
+                                                                                setCustomSelectedChapters([...customSelectedChapters, ch]);
+                                                                            }
+                                                                        }}
+                                                                        style={{
+                                                                            width: '100%', padding: '8px 0', borderRadius: 8, border: 'none',
+                                                                            background: 'var(--accent)', color: 'var(--bg)', fontSize: 12,
+                                                                            fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                                                                            height: 32
+                                                                        }}
+                                                                    >
+                                                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+                                                                        Add Chapter
+                                                                    </button>
                                                                 </div>
+                                                            </>
+                                                        )}
+                                                    </div>
+
+                                                    {selectMode === 'custom' && customSelectedChapters.length > 0 && (
+                                                        <div style={{ marginTop: 8 }}>
+                                                            <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 4, fontWeight: 600 }}>Selected Chapters:</div>
+                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                                                {customSelectedChapters.map(ch => (
+                                                                    <span key={ch} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 8px', borderRadius: 6, background: 'var(--surface2)', border: '1px solid var(--border)', fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>
+                                                                        {formatChapterName(ch)}
+                                                                        <span onClick={() => setCustomSelectedChapters(customSelectedChapters.filter(x => x !== ch))} style={{ cursor: 'pointer', color: '#ef4444', fontWeight: 'bold', fontSize: 13, padding: '0 2px' }}>×</span>
+                                                                    </span>
+                                                                ))}
                                                             </div>
                                                         </div>
-                                                    </div>
+                                                    )}
+
                                                     {isInvalidRange && (
                                                         <div style={{ fontSize: 11, color: '#ef4444', fontWeight: 600 }}>
                                                             <strong>Start</strong> chapter cannot exceed <strong>End</strong> chapter.
@@ -729,7 +873,7 @@ const Upscaler = () => {
 
                         {/* ── Step 3: Model Selection (side-by-side) */}
                         <div>
-                            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>3 · Select Model</div>
+                            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>Select Model</div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
 
                                 {/* Waifu2x card */}
@@ -1042,19 +1186,12 @@ const Upscaler = () => {
                                             }}>
                                                 {/* Series Header */}
                                                 <div style={{
-                                                    padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                                    padding: '12px 16px', display: 'flex', alignItems: 'center',
                                                     borderBottom: `1px solid ${activeInSeries ? 'rgba(99,102,241,0.1)' : 'var(--border)'}`
                                                 }}>
                                                     <div style={{ fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                        {group.mangaTitle}
+                                                        {(group.mangaTitle || group.mangaId || '').replace(/\s*\(\d+\)$/, '')}
                                                     </div>
-                                                    <button onClick={() => removeFromQueueSeries(group.mangaId)} style={{
-                                                        background: 'rgba(239,68,68,0.1)', border: 'none', color: '#ef4444', cursor: 'pointer',
-                                                        width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                        transition: 'all 0.15s'
-                                                    }} title="Cancel Series" onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.15)'} onMouseLeave={e => e.currentTarget.style.background = 'rgba(239,68,68,0.1)'}>
-                                                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                                                    </button>
                                                 </div>
 
                                                 {/* Jobs in Series */}
@@ -1069,7 +1206,7 @@ const Upscaler = () => {
                                                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                                                 <div style={{ flex: 1, minWidth: 0 }}>
                                                                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>
-                                                                        {job.chapters.length} chapters
+                                                                        {job.chapters.length === 1 ? formatChapterName(job.chapters[0]) : `${job.chapters.length} chapters`}
                                                                     </div>
                                                                     <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
                                                                         Model: {(job.model === 'waifu2x'
@@ -1078,6 +1215,15 @@ const Upscaler = () => {
                                                                         {job.scale ? ` · ${job.scale}×` : ''}
                                                                     </div>
                                                                 </div>
+                                                                {(job.status === 'queued' || job.status === 'error' || job.status === 'review') && (
+                                                                    <button onClick={() => removeFromQueue(job.id)} style={{
+                                                                        background: 'rgba(239,68,68,0.1)', border: 'none', color: '#ef4444', cursor: 'pointer',
+                                                                        width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                                        transition: 'all 0.15s'
+                                                                    }} title="Remove Job" onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.15)'} onMouseLeave={e => e.currentTarget.style.background = 'rgba(239,68,68,0.1)'}>
+                                                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                                                    </button>
+                                                                )}
                                                                 {job.status === 'processing' ? (
                                                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(99,102,241,0.1)', padding: '2px 10px 2px 4px', borderRadius: 99 }}>
                                                                         {(job.progress.pagesCurrent === 0 && !(job.progress.stagePercent > 0)) ? (
@@ -1147,16 +1293,13 @@ const Upscaler = () => {
                                                                                 )}
                                                                             </div>
                                                                         </div>
-                                                                        {/* Overall chapter bar (Now below) */}
+                                                                        {/* Overall chapter status */}
                                                                         <div>
                                                                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: 'var(--muted)', marginBottom: 3 }}>
                                                                                 <span style={{ fontWeight: 600, color: 'var(--text)', maxWidth: '70%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                                                    {job.progress.currentChapter || 'Starting…'}
+                                                                                    Current: {job.progress.currentChapter ? formatChapterName(job.progress.currentChapter) : 'Starting…'}
                                                                                 </span>
                                                                                 <span>Ch {job.progress.current + 1} / {job.progress.total}</span>
-                                                                            </div>
-                                                                            <div style={{ height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
-                                                                                <div style={{ height: '100%', borderRadius: 3, background: 'var(--accent)', width: `${chPct}%`, transition: 'width 0.6s ease' }} />
                                                                             </div>
                                                                         </div>
                                                                     </div>
@@ -1204,11 +1347,11 @@ const Upscaler = () => {
                         </div>
 
                         {/* ── Bottom Action Button ─────────────────── */}
-                        <div style={{ marginTop: 'auto', paddingTop: 20 }}>
+                        <div style={{ marginTop: 'auto', paddingTop: 20, display: 'flex', gap: 12 }}>
                             <button
                                 onClick={addToQueue} disabled={addingToQueue || !canSubmit}
                                 style={{
-                                    width: '100%', padding: '13px 0', borderRadius: 10,
+                                    flex: 1, padding: '13px 0', borderRadius: 10,
                                     background: (isProcessing && !canSubmit) ? 'rgba(99,102,241,0.08)' : 'var(--surface2)',
                                     border: (isProcessing && !canSubmit) ? '1px solid rgba(99,102,241,0.25)' : '1px solid var(--border)',
                                     color: (isProcessing && !canSubmit) ? 'var(--accent)' : canSubmit ? 'var(--text)' : 'var(--muted)',
@@ -1247,7 +1390,7 @@ const Upscaler = () => {
                                     await fetch(`${API}/upscale/abort`, { method: 'POST' });
                                     fetchQueue();
                                 }} style={{
-                                    width: '100%', marginTop: 8, padding: '13px 0', borderRadius: 10, border: '1px solid rgba(239,68,68,0.3)',
+                                    padding: '0 20px', borderRadius: 10, border: '1px solid rgba(239,68,68,0.3)',
                                     background: 'rgba(239,68,68,0.08)', color: '#ef4444', fontSize: 14, fontWeight: 700,
                                     cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, transition: 'all 0.15s'
                                 }}>

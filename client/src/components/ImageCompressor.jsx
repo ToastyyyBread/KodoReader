@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import CustomDropdown from './CustomDropdown';
+import React, { useState, useEffect, useCallback } from 'react';
 import { getApiBase } from '../runtime';
 
 const API = '/api';
@@ -26,6 +25,12 @@ const formatChapterName = (name) => {
     if (!name) return name;
     const m = name.match(/chapter\s*[-_]?\s*([\d\.]+)/i);
     return m ? `Chapter - ${m[1].padStart(2, '0')}` : name;
+};
+
+const parseChapterNum = (name) => {
+    if (!name) return 0;
+    const match = name.match(/(?:chapter|ch|c)\s*[-_]?\s*([\d\.]+)/i) || name.match(/([\d\.]+)/);
+    return match ? parseFloat(match[1]) : 0;
 };
 
 // ── Series Picker Modal ──────────────────────────────────
@@ -120,9 +125,9 @@ const modelCardStyle = {
 
 let _pcState = {
     selectedManga: null, selectedVersionId: null, chapters: [],
-    startIdx: 1, endIdx: 1, activePreset: null, quality: 82,
-    grayscale: false, sharpen: true, activeTab: 'compressor',
-    analyzeResults: null
+    startIdx: 1, endIdx: 1, activeTab: 'compressor',
+    quality: 80, smartSubsample: true, effort: 'best', lossless: false,
+    selectMode: 'range', customSelectedChapters: []
 };
 
 // ── Main Component ───────────────────────────────────────
@@ -137,7 +142,6 @@ const ImageCompressor = () => {
     const [showPicker, setShowPicker] = useState(false);
     const [queue, setQueue] = useState([]);
     const [addingToQueue, setAddingToQueue] = useState(false);
-    const [analyzeResults, setAnalyzeResults] = useState(_pcState.analyzeResults);
     const [activeTab, setActiveTab] = useState(_pcState.activeTab);
 
     // Archive
@@ -145,13 +149,75 @@ const ImageCompressor = () => {
     const [archiveAction, setArchiveAction] = useState(null); // { type, seriesId, chapters }
     const [archiveSelectedChapters, setArchiveSelectedChapters] = useState({}); // { mangaId: Set }
 
-    // Compression settings
-    const [activePreset, setActivePreset] = useState(_pcState.activePreset);
+    // WebP compression settings
     const [quality, setQuality] = useState(_pcState.quality);
-    const [grayscale, setGrayscale] = useState(_pcState.grayscale);
-    const [sharpen, setSharpen] = useState(_pcState.sharpen);
-    const [maxWidth, setMaxWidth] = useState(0);
-    const [maxHeight, setMaxHeight] = useState(0);
+    const [smartSubsample, setSmartSubsample] = useState(_pcState.smartSubsample);
+    const [effort, setEffort] = useState(_pcState.effort);
+    const [lossless, setLossless] = useState(_pcState.lossless);
+
+    // Chapter range input states
+    const [startInputVal, setStartInputVal] = useState('');
+    const [endInputVal, setEndInputVal] = useState('');
+
+    const [selectMode, setSelectMode] = useState(_pcState.selectMode || 'range');
+    const [customSelectedChapters, setCustomSelectedChapters] = useState(_pcState.customSelectedChapters || []);
+
+    const findChapterIndexByNum = useCallback((num) => {
+        if (isNaN(num)) return -1;
+        let idx = chapters.findIndex(ch => parseChapterNum(ch) === num);
+        if (idx !== -1) return idx;
+        let closestIdx = -1;
+        let minDiff = Infinity;
+        for (let i = 0; i < chapters.length; i++) {
+            const diff = Math.abs(parseChapterNum(chapters[i]) - num);
+            if (diff < minDiff) {
+                minDiff = diff;
+                closestIdx = i;
+            }
+        }
+        return closestIdx;
+    }, [chapters]);
+
+    useEffect(() => {
+        if (chapters.length > 0) {
+            const startCh = chapters[Math.max(0, Math.min(startIdx - 1, chapters.length - 1))];
+            const startNum = parseChapterNum(startCh);
+            if (isNaN(parseFloat(startInputVal)) || parseFloat(startInputVal) !== startNum) {
+                setStartInputVal(String(startNum));
+            }
+
+            const endCh = chapters[Math.max(0, Math.min(endIdx - 1, chapters.length - 1))];
+            const endNum = parseChapterNum(endCh);
+            if (isNaN(parseFloat(endInputVal)) || parseFloat(endInputVal) !== endNum) {
+                setEndInputVal(String(endNum));
+            }
+        } else {
+            setStartInputVal('');
+            setEndInputVal('');
+        }
+    }, [startIdx, endIdx, chapters]);
+
+    const handleStartInputChange = (valStr) => {
+        setStartInputVal(valStr);
+        const parsed = parseFloat(valStr);
+        if (!isNaN(parsed)) {
+            const idx = findChapterIndexByNum(parsed);
+            if (idx !== -1) {
+                setStartIdx(idx + 1);
+            }
+        }
+    };
+
+    const handleEndInputChange = (valStr) => {
+        setEndInputVal(valStr);
+        const parsed = parseFloat(valStr);
+        if (!isNaN(parsed)) {
+            const idx = findChapterIndexByNum(parsed);
+            if (idx !== -1) {
+                setEndIdx(idx + 1);
+            }
+        }
+    };
 
     useEffect(() => {
         _pcState.selectedManga = selectedManga;
@@ -159,20 +225,22 @@ const ImageCompressor = () => {
         _pcState.chapters = chapters;
         _pcState.startIdx = startIdx;
         _pcState.endIdx = endIdx;
-        _pcState.activePreset = activePreset;
         _pcState.quality = quality;
-        _pcState.grayscale = grayscale;
-        _pcState.sharpen = sharpen;
+        _pcState.smartSubsample = smartSubsample;
+        _pcState.effort = effort;
+        _pcState.lossless = lossless;
         _pcState.activeTab = activeTab;
-        _pcState.analyzeResults = analyzeResults;
-    }, [selectedManga, selectedVersionId, chapters, startIdx, endIdx, activePreset, quality, grayscale, sharpen, activeTab, analyzeResults]);
+        _pcState.selectMode = selectMode;
+        _pcState.customSelectedChapters = customSelectedChapters;
+    }, [selectedManga, selectedVersionId, chapters, startIdx, endIdx, quality, smartSubsample, effort, lossless, activeTab, selectMode, customSelectedChapters]);
 
-    const PRESETS = {
-        manga: { label: 'Manga', desc: 'B&W manga — converts to grayscale, aggressive compression', quality: 78, grayscale: true, sharpen: true, color: '#22c55e', badge: 'B&W' },
-        manhwa: { label: 'Manhwa', desc: 'Full-color webtoon — preserves colors, balanced compression', quality: 82, grayscale: false, sharpen: true, color: '#818cf8', badge: 'Color' },
-        aggressive: { label: 'Aggressive', desc: 'Maximum file-size reduction, some quality loss', quality: 65, grayscale: false, sharpen: false, color: '#ef4444', badge: 'Heavy' },
-        lossless: { label: 'Lossless-ish', desc: 'Nearly original quality, larger files', quality: 95, grayscale: false, sharpen: true, color: '#f59e0b', badge: 'Light' },
-    };
+    const EFFORT_OPTIONS = [
+        { value: 'fastest', label: 'Fastest', desc: 'Maximum speed, larger file size.' },
+        { value: 'fast', label: 'Fast', desc: 'Fast processing, moderate compression.' },
+        { value: 'balanced', label: 'Balanced', desc: 'Optimal balance of speed and storage efficiency.' },
+        { value: 'good', label: 'Good', desc: 'High-quality compression, slightly longer processing time.' },
+        { value: 'best', label: 'Best', desc: 'Maximum compression ratio. Recommended for production.' },
+    ];
 
     // ── Fetches ──────────────────────────────────────────
     useEffect(() => {
@@ -231,28 +299,23 @@ const ImageCompressor = () => {
     }, [fetchQueue, fetchArchive]);
 
     // ── Derived ──────────────────────────────────────────
-    const isInvalidRange = startIdx > endIdx || startIdx < 1 || (chapters.length > 0 && endIdx > chapters.length);
+    const isInvalidRange = selectMode === 'range' && (startIdx > endIdx || startIdx < 1 || (chapters.length > 0 && endIdx > chapters.length));
     const selectedChapters = (() => {
-        if (!chapters.length || isInvalidRange) return [];
+        if (!chapters.length) return [];
+        if (selectMode === 'single') {
+            const idx = Math.max(0, Math.min(startIdx - 1, chapters.length - 1));
+            return [chapters[idx]];
+        }
+        if (selectMode === 'custom') {
+            return customSelectedChapters;
+        }
+        if (isInvalidRange) return [];
         return chapters.slice(startIdx - 1, endIdx);
     })();
 
-    const canSubmit = selectedManga && activePreset && selectedChapters.length > 0 && !isInvalidRange;
+    const canSubmit = selectedManga && selectedChapters.length > 0 && (selectMode !== 'range' || !isInvalidRange);
     const activeJob = queue.find(j => j.status === 'processing');
     const isProcessing = !!activeJob;
-
-    // ── Select preset ────────────────────────────────────
-    const selectPreset = (key) => {
-        if (activePreset === key) {
-            setActivePreset(null);
-            return;
-        }
-        setActivePreset(key);
-        const p = PRESETS[key];
-        setQuality(p.quality);
-        setGrayscale(p.grayscale);
-        setSharpen(p.sharpen);
-    };
 
     // ── Handlers ─────────────────────────────────────────
     const addToQueue = async () => {
@@ -266,8 +329,7 @@ const ImageCompressor = () => {
                     mangaTitle: selectedManga.title,
                     chapters: selectedChapters,
                     versionId: selectedVersionId || undefined,
-                    preset: activePreset,
-                    quality, grayscale, sharpen, maxWidth, maxHeight,
+                    quality, smartSubsample, effort, lossless,
                 }),
             });
             if (!res.ok) throw new Error('Failed to add compression job');
@@ -315,36 +377,21 @@ const ImageCompressor = () => {
         fetchQueue();
     };
 
-    const analyzeChapters = async () => {
-        if (!selectedManga || selectedChapters.length === 0) return;
-        try {
-            const res = await fetch(`${API}/compress/analyze`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mangaId: selectedManga.id, chapters: selectedChapters, versionId: selectedVersionId }),
-            });
-            const data = await res.json();
-            setAnalyzeResults(data);
-        } catch { }
-    };
-
     const restoreBackup = async (ch) => {
         await fetch(`${API}/compress/restore`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ mangaId: selectedManga.id, chapter: ch, versionId: selectedVersionId }),
         });
-        analyzeChapters();
     };
 
     const clearAll = () => {
         setSelectedManga(null);
-        setActivePreset(null);
         setStartIdx(1);
         setEndIdx(1);
-        setAnalyzeResults(null);
     };
 
     const groupedQueue = [];
-    queue.forEach(job => {
+    queue.filter(j => j.status !== 'cancelled').forEach(job => {
         let group = groupedQueue.find(g => g.mangaId === job.mangaId);
         if (!group) {
             group = { mangaId: job.mangaId, mangaTitle: job.mangaTitle, jobs: [] };
@@ -456,11 +503,11 @@ const ImageCompressor = () => {
                 <button onClick={clearAll} style={{
                     padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)',
                     background: 'var(--surface2)', color: 'var(--text)', fontSize: 12,
-                    fontWeight: 600, cursor: (selectedManga || activePreset !== null) ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: 6,
+                    fontWeight: 600, cursor: selectedManga ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: 6,
                     transition: 'all 0.15s',
-                    opacity: (selectedManga || activePreset !== null) ? 1 : 0,
-                    pointerEvents: (selectedManga || activePreset !== null) ? 'auto' : 'none',
-                }} onMouseEnter={e => { if (selectedManga || activePreset !== null) e.currentTarget.style.background = 'var(--surface)'; }} onMouseLeave={e => e.currentTarget.style.background = 'var(--surface2)'}>
+                    opacity: selectedManga ? 1 : 0,
+                    pointerEvents: selectedManga ? 'auto' : 'none',
+                }} onMouseEnter={e => { if (selectedManga) e.currentTarget.style.background = 'var(--surface)'; }} onMouseLeave={e => e.currentTarget.style.background = 'var(--surface2)'}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
                     Clear All
                 </button>
@@ -493,7 +540,7 @@ const ImageCompressor = () => {
                             <circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" />
                         </svg>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <span><strong>Sharp + MozJPEG</strong> — Optimizes images by re-encoding them into high-efficiency JPEG format, reducing file size while preserving visual quality.</span>
+                            <span><strong>Sharp + WebP</strong> — Optimizes images by re-encoding them to WebP format, reducing file size while preserving visual quality and text clarity.</span>
                             <span style={{ fontSize: 11, color: 'var(--muted)' }}>Original CBZ can be saved as backup. You can restore them anytime.</span>
                         </div>
                     </div>
@@ -501,7 +548,7 @@ const ImageCompressor = () => {
                     {/* ── Step 1: Series ─────────────────────── */}
                     <div className="settings-card">
                         <div style={{ padding: '14px 18px', borderBottom: selectedManga ? '1px solid var(--border)' : 'none' }}>
-                            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>1 · Select Series</div>
+                            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>Select Series</div>
                             <div onClick={() => setShowPicker(true)} style={{
                                 display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
                                 border: '1.5px dashed var(--border)', borderRadius: 10, cursor: 'pointer',
@@ -536,7 +583,7 @@ const ImageCompressor = () => {
                         {selectedManga && (
                             <div style={{ padding: '14px 18px' }}>
                                 <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>
-                                    2 · Chapter Range
+                                    Chapters
                                     {selectedChapters.length > 0 && (
                                         <span style={{ marginLeft: 8, color: 'var(--accent)', textTransform: 'none', letterSpacing: 0, fontSize: 11, fontWeight: 600 }}>
                                             · {selectedChapters.length} chapter{selectedChapters.length > 1 ? 's' : ''} selected
@@ -549,14 +596,32 @@ const ImageCompressor = () => {
                                     <div style={{ fontSize: 12, color: 'var(--muted)' }}>No chapters found</div>
                                 ) : (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                        {/* Selection Mode Toggle */}
+                                        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', color: selectMode === 'range' ? 'var(--text)' : 'var(--muted)' }}>
+                                                <input type="radio" name="compressSelectMode" checked={selectMode === 'range'} onChange={() => setSelectMode('range')} style={{ accentColor: 'var(--accent)' }} />
+                                                Range
+                                            </label>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', color: selectMode === 'single' ? 'var(--text)' : 'var(--muted)' }}>
+                                                <input type="radio" name="compressSelectMode" checked={selectMode === 'single'} onChange={() => setSelectMode('single')} style={{ accentColor: 'var(--accent)' }} />
+                                                Single
+                                            </label>
+                                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', color: selectMode === 'custom' ? 'var(--text)' : 'var(--muted)' }}>
+                                                <input type="radio" name="compressSelectMode" checked={selectMode === 'custom'} onChange={() => setSelectMode('custom')} style={{ accentColor: 'var(--accent)' }} />
+                                                Multiple
+                                            </label>
+                                        </div>
+
                                         <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
                                             <div style={{ flex: 1 }}>
-                                                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>Start</div>
+                                                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>
+                                                    {selectMode === 'custom' ? 'Select Chapter' : 'Start Chapter'}
+                                                </div>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                                    <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface)', border: `1px solid ${isInvalidRange ? '#ef4444' : 'var(--border)'}`, borderRadius: 6, overflow: 'hidden' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface)', border: `1.5px solid ${isInvalidRange ? '#ef4444' : 'var(--border)'}`, borderRadius: 6, overflow: 'hidden' }}>
                                                         <button onClick={() => setStartIdx(v => Math.max(1, v - 1))} style={{ padding: '6px 10px', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>-</button>
-                                                        <input type="number" min="1" max={chapters.length} value={startIdx} onChange={e => setStartIdx(parseInt(e.target.value) || 1)} className="hide-spin"
-                                                            style={{ ...inputStyle, width: 44, border: 'none', padding: '6px 0', borderRadius: 0, background: 'transparent' }} />
+                                                        <input type="text" value={startInputVal} onChange={e => handleStartInputChange(e.target.value)}
+                                                            style={{ ...inputStyle, width: 52, border: 'none', padding: '6px 0', borderRadius: 0, background: 'transparent' }} />
                                                         <button onClick={() => setStartIdx(v => Math.min(chapters.length, v + 1))} style={{ padding: '6px 10px', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>+</button>
                                                     </div>
                                                     <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
@@ -564,47 +629,70 @@ const ImageCompressor = () => {
                                                     </div>
                                                 </div>
                                             </div>
-                                            <div style={{ width: 1, height: 32, background: 'var(--border)', alignSelf: 'center', margin: '0 4px' }} />
-                                            <div style={{ flex: 1 }}>
-                                                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>End</div>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                                    <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface)', border: `1px solid ${isInvalidRange ? '#ef4444' : 'var(--border)'}`, borderRadius: 6, overflow: 'hidden' }}>
-                                                        <button onClick={() => setEndIdx(v => Math.max(1, v - 1))} style={{ padding: '6px 10px', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>-</button>
-                                                        <input type="number" min="1" max={chapters.length} value={endIdx} onChange={e => setEndIdx(parseInt(e.target.value) || 1)} className="hide-spin"
-                                                            style={{ ...inputStyle, width: 44, border: 'none', padding: '6px 0', borderRadius: 0, background: 'transparent' }} />
-                                                        <button onClick={() => setEndIdx(v => Math.min(chapters.length, v + 1))} style={{ padding: '6px 10px', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>+</button>
+
+                                            {selectMode === 'range' && (
+                                                <>
+                                                    <div style={{ width: 1, height: 32, background: 'var(--border)', alignSelf: 'center', margin: '0 4px' }} />
+                                                    <div style={{ flex: 1 }}>
+                                                        <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>End</div>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface)', border: `1px solid ${isInvalidRange ? '#ef4444' : 'var(--border)'}`, borderRadius: 6, overflow: 'hidden' }}>
+                                                                <button onClick={() => setEndIdx(v => Math.max(1, v - 1))} style={{ padding: '6px 10px', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>-</button>
+                                                                <input type="text" value={endInputVal} onChange={e => handleEndInputChange(e.target.value)}
+                                                                    style={{ ...inputStyle, width: 52, border: 'none', padding: '6px 0', borderRadius: 0, background: 'transparent' }} />
+                                                                <button onClick={() => setEndIdx(v => Math.min(chapters.length, v + 1))} style={{ padding: '6px 10px', background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: 14, fontWeight: 'bold' }}>+</button>
+                                                            </div>
+                                                            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
+                                                                {formatChapterName(chapters[Math.max(0, Math.min(endIdx - 1, chapters.length - 1))])}
+                                                            </div>
+                                                        </div>
                                                     </div>
-                                                    <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>
-                                                        {formatChapterName(chapters[Math.max(0, Math.min(endIdx - 1, chapters.length - 1))])}
+                                                </>
+                                            )}
+
+                                            {selectMode === 'custom' && (
+                                                <>
+                                                    <div style={{ width: 1, height: 32, background: 'var(--border)', alignSelf: 'center', margin: '0 4px' }} />
+                                                    <div style={{ flex: 1, alignSelf: 'flex-end' }}>
+                                                        <button
+                                                            onClick={() => {
+                                                                const ch = chapters[startIdx - 1];
+                                                                if (ch && !customSelectedChapters.includes(ch)) {
+                                                                    setCustomSelectedChapters([...customSelectedChapters, ch]);
+                                                                }
+                                                            }}
+                                                            style={{
+                                                                width: '100%', padding: '8px 0', borderRadius: 8, border: 'none',
+                                                                background: 'var(--accent)', color: 'var(--bg)', fontSize: 12,
+                                                                fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                                                                height: 32
+                                                            }}
+                                                        >
+                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+                                                            Add Chapter
+                                                        </button>
                                                     </div>
+                                                </>
+                                            )}
+                                        </div>
+
+                                        {selectMode === 'custom' && customSelectedChapters.length > 0 && (
+                                            <div style={{ marginTop: 8 }}>
+                                                <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 4, fontWeight: 600 }}>Selected Chapters:</div>
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                                    {customSelectedChapters.map(ch => (
+                                                        <span key={ch} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 8px', borderRadius: 6, background: 'var(--surface2)', border: '1px solid var(--border)', fontSize: 11.5, fontWeight: 600, color: 'var(--text)' }}>
+                                                            {formatChapterName(ch)}
+                                                            <span onClick={() => setCustomSelectedChapters(customSelectedChapters.filter(x => x !== ch))} style={{ cursor: 'pointer', color: '#ef4444', fontWeight: 'bold', fontSize: 13, padding: '0 2px' }}>×</span>
+                                                        </span>
+                                                    ))}
                                                 </div>
                                             </div>
-                                        </div>
+                                        )}
+
                                         {isInvalidRange && (
                                             <div style={{ fontSize: 11, color: '#ef4444', fontWeight: 600 }}>
                                                 <strong>Start</strong> chapter cannot exceed <strong>End</strong> chapter.
-                                            </div>
-                                        )}
-                                        {/* Analyze button */}
-                                        {!isInvalidRange && selectedChapters.length > 0 && (
-                                            <button onClick={analyzeChapters} style={{
-                                                padding: '7px 14px', borderRadius: 8, border: '1px solid var(--border)',
-                                                background: 'var(--surface2)', color: 'var(--text)', fontSize: 11.5,
-                                                fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, width: 'fit-content',
-                                            }}>
-                                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                                                Analyze Selected ({selectedChapters.length})
-                                            </button>
-                                        )}
-                                        {analyzeResults && (
-                                            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', fontSize: 11.5 }}>
-                                                <div style={{ fontWeight: 700, marginBottom: 6, color: 'var(--text)' }}>Analysis</div>
-                                                <div style={{ color: 'var(--muted)' }}>
-                                                    {analyzeResults.length} CBZ files · {analyzeResults.reduce((s, r) => s + r.pageCount, 0)} pages · {formatSize(analyzeResults.reduce((s, r) => s + r.fileSize, 0))} total
-                                                </div>
-                                                {analyzeResults.some(r => r.hasBackup) && (
-                                                    <div style={{ marginTop: 4, color: '#f59e0b', fontSize: 11 }}>⚠ Some chapters have existing backups (previously compressed)</div>
-                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -613,66 +701,99 @@ const ImageCompressor = () => {
                         )}
                     </div>
 
-                    {/* ── Step 3: Preset Selection (side-by-side cards) */}
-                    <div>
-                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>3 · Compression Preset</div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                            {Object.entries(PRESETS).map(([key, preset]) => (
-                                <div key={key} onClick={() => selectPreset(key)}
-                                    style={{
-                                        ...modelCardStyle,
-                                        border: `1.5px solid ${activePreset === key ? preset.color : 'var(--border)'}`,
-                                        background: activePreset === key ? `${preset.color}0d` : 'var(--surface2)',
-                                    }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                                        <div style={{ fontSize: 13, fontWeight: 700 }}>{preset.label}</div>
-                                        <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 5, background: `${preset.color}18`, color: preset.color, textTransform: 'uppercase', letterSpacing: 0.5 }}>{preset.badge}</span>
-                                    </div>
-                                    <div style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.5, marginBottom: 12 }}>{preset.desc}</div>
+                    {/* ── Step 3: WebP Compression Settings ───────────── */}
+                    <div className="settings-card">
+                        <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 2 }}>Compression Settings</div>
+                            <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 4 }}>WebP encoding - highly optimized for manhwa & webtoon</div>
+                        </div>
+                        <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-                                    {/* Settings inside card */}
-                                    <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 10 }}>
-                                        <div style={{ flex: 1, minWidth: 0 }}>
-                                            <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 4, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                                                Quality
-                                                <Tooltip align="left" content={<>JPEG quality (1-100). Lower = smaller file, more artifacts.<br /><br /><strong>65</strong>: Aggressive<br /><strong>78</strong>: Manga (B&W, good)<br /><strong>82</strong>: Manhwa (color, balanced)<br /><strong>95</strong>: Near-lossless</>} />
-                                            </div>
-                                            <CustomDropdown
-                                                value={activePreset === key ? quality : preset.quality}
-                                                onChange={val => { setQuality(parseInt(val)); setActivePreset(key); }}
-                                                items={[
-                                                    { value: 65, label: '65 (Aggressive)' },
-                                                    { value: 72, label: '72 (Medium)' },
-                                                    { value: 78, label: '78 (Good)' },
-                                                    { value: 82, label: '82 (Balanced)' },
-                                                    { value: 88, label: '88 (High)' },
-                                                    { value: 95, label: '95 (Near-lossless)' },
-                                                ]}
-                                            />
-                                        </div>
-                                        <div style={{ flex: 1, minWidth: 0 }}>
-                                            <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 4, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                                                Options
-                                                <Tooltip align="right" content={<>Sharpening preserves line art crispness after JPEG re-encode.<br /><br />Grayscale converts to B&W which reduces file size further for manga.</>} />
-                                            </div>
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 2 }}>
-                                                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text)', cursor: 'pointer' }}>
-                                                    <input type="checkbox" checked={activePreset === key ? sharpen : preset.sharpen}
-                                                        onChange={e => { setSharpen(e.target.checked); setActivePreset(key); }}
-                                                        style={{ accentColor: preset.color }} />
-                                                    Sharpen
-                                                </label>
-                                                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text)', cursor: 'pointer' }}>
-                                                    <input type="checkbox" checked={activePreset === key ? grayscale : preset.grayscale}
-                                                        onChange={e => { setGrayscale(e.target.checked); setActivePreset(key); }}
-                                                        style={{ accentColor: preset.color }} />
-                                                    Grayscale
-                                                </label>
-                                            </div>
-                                        </div>
+                            {/* Quality */}
+                            <div>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>Quality</span>
+                                        <Tooltip align="left" content={<>Lower = smaller file, more artifacts.<br /><br /><strong>80</strong>: Default - Recommended<br /><strong>65-75</strong>: Aggressive<br /><strong>90+</strong>: Near-lossless</>} />
                                     </div>
+                                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent)', minWidth: 28, textAlign: 'right' }}>{quality}</span>
                                 </div>
-                            ))}
+                                <input type="range" min={40} max={100} step={1} value={quality}
+                                    onChange={e => setQuality(parseInt(e.target.value))}
+                                    style={{ width: '100%', accentColor: 'var(--accent)', cursor: 'pointer' }} />
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
+                                    <span>40 · Smallest</span>
+                                    <span>100 · Best</span>
+                                </div>
+                            </div>
+
+                            {/* Effort */}
+                            <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                                    <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>Effort</span>
+                                    <Tooltip align="left" content={<>Effort determines how hard the system works to shrink the file.<br /><br /><strong>Best</strong>: Max compression, saves storage (Recommended)<br /><strong>Balanced</strong>: Optimal balance of speed & size<br /><strong>Fastest</strong>: Instant processing, larger file</>} />
+                                </div>
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                    {EFFORT_OPTIONS.map(opt => (
+                                        <button key={opt.value} onClick={() => setEffort(opt.value)}
+                                            title={opt.desc}
+                                            style={{
+                                                flex: 1, padding: '6px 4px', borderRadius: 7, fontSize: 11, fontWeight: 700,
+                                                cursor: 'pointer', transition: 'all 0.15s',
+                                                border: `1.5px solid ${effort === opt.value ? 'var(--accent)' : 'var(--border)'}`,
+                                                background: effort === opt.value ? 'rgba(99,102,241,0.12)' : 'var(--surface)',
+                                                color: effort === opt.value ? 'var(--accent)' : 'var(--muted)',
+                                            }}>
+                                            {opt.label}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 6 }}>
+                                    {EFFORT_OPTIONS.find(o => o.value === effort)?.desc || ''}
+                                </div>
+                            </div>
+
+                            {/* Toggles */}
+                            <div style={{ display: 'flex', gap: 12 }}>
+                                {/* Smart Subsample */}
+                                <label style={{
+                                    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                    padding: '10px 12px', borderRadius: 8,
+                                    background: smartSubsample ? 'rgba(99,102,241,0.08)' : 'var(--surface)',
+                                    border: `1.5px solid ${smartSubsample ? 'rgba(99,102,241,0.35)' : 'var(--border)'}`,
+                                    cursor: 'pointer', transition: 'all 0.15s',
+                                }}>
+                                    <div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Smart Subsample</span>
+                                            <Tooltip content="Keeps dialogue text sharp and clear. Recommended for manhwa/webtoon." />
+                                        </div>
+                                        <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 2 }}>Text Clarity Enhancement</div>
+                                    </div>
+                                    <input type="checkbox" checked={smartSubsample} onChange={e => setSmartSubsample(e.target.checked)}
+                                        style={{ width: 16, height: 16, accentColor: 'var(--accent)', cursor: 'pointer' }} />
+                                </label>
+
+                                {/* Lossless */}
+                                <label style={{
+                                    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                    padding: '10px 12px', borderRadius: 8,
+                                    background: lossless ? 'rgba(245,158,11,0.08)' : 'var(--surface)',
+                                    border: `1.5px solid ${lossless ? 'rgba(245,158,11,0.35)' : 'var(--border)'}`,
+                                    cursor: 'pointer', transition: 'all 0.15s',
+                                }}>
+                                    <div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Lossless</span>
+                                            <Tooltip align="right" content={<>Lossless = Highest quality, significantly larger file size.</>} />
+                                        </div>
+                                        <div style={{ fontSize: 10.5, color: lossless ? '#f59e0b' : 'var(--muted)', marginTop: 2, fontWeight: lossless ? 600 : 400 }}>{lossless ? 'Enabled' : 'Disabled'}</div>
+                                    </div>
+                                    <input type="checkbox" checked={lossless} onChange={e => setLossless(e.target.checked)}
+                                        style={{ width: 16, height: 16, accentColor: '#f59e0b', cursor: 'pointer' }} />
+                                </label>
+                            </div>
+
                         </div>
                     </div>
 
@@ -701,19 +822,12 @@ const ImageCompressor = () => {
                                         }}>
                                             {/* Series Header */}
                                             <div style={{
-                                                padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                                padding: '12px 16px', display: 'flex', alignItems: 'center',
                                                 borderBottom: `1px solid ${activeInSeries ? 'rgba(99,102,241,0.1)' : 'var(--border)'}`
                                             }}>
                                                 <div style={{ fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                     {group.mangaTitle}
                                                 </div>
-                                                <button onClick={() => removeFromQueueSeries(group.mangaId)} style={{
-                                                    background: 'rgba(239,68,68,0.1)', border: 'none', color: '#ef4444', cursor: 'pointer',
-                                                    width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                    transition: 'all 0.15s'
-                                                }} title="Cancel Series" onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.15)'} onMouseLeave={e => e.currentTarget.style.background = 'rgba(239,68,68,0.1)'}>
-                                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                                                </button>
                                             </div>
 
                                             {/* Jobs in Series */}
@@ -728,12 +842,22 @@ const ImageCompressor = () => {
                                                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                                             <div style={{ flex: 1, minWidth: 0 }}>
                                                                 <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>
-                                                                    {job.chapters.length} chapters
+                                                                    {job.chapters.length === 1 ? formatChapterName(job.chapters[0]) : `${job.chapters.length} chapters`}
                                                                 </div>
                                                                 <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
-                                                                    Preset: {PRESETS[job.preset]?.label || job.preset} · Quality {job.quality}
+                                                                    WebP · Q{job.quality} · {job.effort || 'best'} effort
                                                                 </div>
                                                             </div>
+
+                                                            {(job.status === 'queued' || job.status === 'error') && (
+                                                                <button onClick={() => removeFromQueue(job.id)} style={{
+                                                                    background: 'rgba(239,68,68,0.1)', border: 'none', color: '#ef4444', cursor: 'pointer',
+                                                                    width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                                    transition: 'all 0.15s'
+                                                                }} title="Remove Job" onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.15)'} onMouseLeave={e => e.currentTarget.style.background = 'rgba(239,68,68,0.1)'}>
+                                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                                                </button>
+                                                            )}
                                                             {job.status === 'processing' ? (
                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(99,102,241,0.1)', padding: '2px 10px 2px 4px', borderRadius: 99 }}>
                                                                     {job.progress === 0 && !job.processedPages ? (
@@ -775,24 +899,38 @@ const ImageCompressor = () => {
                                                                 </div>
                                                             </div>
                                                         )}
-                                                        {job.status === 'done' && job.originalSize > 0 && (
+                                                        {(job.status === 'done' || job.status === 'review') && job.originalSize > 0 && (
                                                             <div style={{ marginTop: 4, fontSize: 11, color: '#22c55e', fontWeight: 600 }}>
                                                                 {formatSize(job.originalSize)} → {formatSize(job.compressedSize)} ({Math.round((1 - job.compressedSize / job.originalSize) * 100)}% reduced)
                                                             </div>
                                                         )}
                                                         {job.status === 'review' && (
-                                                            <div style={{ marginTop: 8, display: 'flex', gap: 10, background: 'rgba(245,158,11,0.05)', padding: '12px', borderRadius: 8, border: '1px solid rgba(245,158,11,0.2)' }}>
-                                                                <button onClick={() => finalizeJob(job.id, 'archive')} style={{ flex: 1, padding: '8px', borderRadius: 6, background: '#eab308', color: '#fff', fontSize: 11, fontWeight: 700, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'background 0.15s' }} onMouseEnter={e => e.currentTarget.style.background = '#ca8a04'} onMouseLeave={e => e.currentTarget.style.background = '#eab308'}>
-                                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
-                                                                    Replace & Save Original
-                                                                </button>
-                                                                <button onClick={() => finalizeJob(job.id, 'replace')} style={{ flex: 1, padding: '8px', borderRadius: 6, background: '#22c55e', color: '#fff', fontSize: 11, fontWeight: 700, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'background 0.15s' }} onMouseEnter={e => e.currentTarget.style.background = '#16a34a'} onMouseLeave={e => e.currentTarget.style.background = '#22c55e'}>
-                                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
-                                                                    Replace & Delete Original
-                                                                </button>
-                                                                <button onClick={() => discardJob(job.id)} title="Discard" style={{ padding: '8px 12px', borderRadius: 6, background: 'transparent', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', fontSize: 11, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s' }} onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.1)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 18L18 6M6 6l12 12" /></svg>
-                                                                </button>
+                                                            <div style={{ background: 'rgba(234,179,8,0.05)', border: '1px solid rgba(234,179,8,0.2)', padding: '12px 14px', borderRadius: 8, marginTop: 4 }}>
+                                                                <div style={{ fontSize: 13, fontWeight: 700, color: '#eab308', marginBottom: 2, display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+                                                                    Finished
+                                                                </div>
+                                                                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4, paddingLeft: 24, lineHeight: 1.4 }}>
+                                                                    Completed Chapters: {job.chapters.length} ({job.chapters.join(', ')})
+                                                                </div>
+                                                                {job.originalSize > 0 && (
+                                                                    <div style={{ fontSize: 12, fontWeight: 700, color: '#22c55e', paddingLeft: 24, marginBottom: 12 }}>
+                                                                        {formatSize(job.originalSize)} → {formatSize(job.compressedSize)} ({Math.round((1 - job.compressedSize / job.originalSize) * 100)}% reduced)
+                                                                    </div>
+                                                                )}
+                                                                <div style={{ display: 'flex', gap: 8, paddingLeft: 24 }}>
+                                                                    <button onClick={() => finalizeJob(job.id, 'archive')} style={{
+                                                                        flex: 1, padding: '9px 0', borderRadius: 6, background: 'rgba(234,179,8,0.15)', border: '1px solid rgba(234,179,8,0.3)', color: '#eab308', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s'
+                                                                    }}>Replace & Keep Original</button>
+                                                                    <button onClick={() => finalizeJob(job.id, 'replace')} style={{
+                                                                        flex: 1, padding: '9px 0', borderRadius: 6, background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s'
+                                                                    }}>Replace & Delete Original</button>
+                                                                </div>
+                                                                <div style={{ display: 'flex', justifyContent: 'center', marginTop: 10 }}>
+                                                                    <button onClick={() => discardJob(job.id)} style={{
+                                                                        background: 'none', border: 'none', color: 'var(--muted)', fontSize: 10.5, cursor: 'pointer', fontWeight: 500, padding: '4px 8px', textDecoration: 'underline'
+                                                                    }}>Discard Compressed Images</button>
+                                                                </div>
                                                             </div>
                                                         )}
                                                         {job.error && <div style={{ marginTop: 4, fontSize: 11, color: '#ef4444' }}>{job.error}</div>}

@@ -31,3 +31,8 @@ yarn-error.log*
 # System
 .DS_Store
 Thumbs.db
+
+# Tauri signing keys & update manifest
+kodo.key
+kodo.key.pub
+latest.json
